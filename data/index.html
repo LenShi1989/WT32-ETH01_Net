@@ -4,368 +4,1088 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WT32-ETH01 網路設定</title>
+  <title>WT32-ETH01 網路配置</title>
   <style>
+    :root {
+      --primary: #4361ee;
+      --secondary: #3a0ca3;
+      --success: #4cc9f0;
+      --warning: #f72585;
+      --light: #f8f9fa;
+      --dark: #343a40;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+    }
+
     body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
     }
 
     .container {
-      max-width: 800px;
+      max-width: 1200px;
       margin: 0 auto;
+      background: white;
+      border-radius: 15px;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
     }
 
-    .section {
-      margin-bottom: 30px;
-      padding: 20px;
-      border: 1px solid #ddd;
-      border-radius: 5px;
+    .header {
+      background: var(--primary);
+      color: white;
+      padding: 30px;
+      text-align: center;
     }
 
-    .status {
-      padding: 10px;
+    .header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+    }
+
+    .header .subtitle {
+      opacity: 0.9;
+      font-size: 1.1rem;
+    }
+
+    .content {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      min-height: 600px;
+    }
+
+    .sidebar {
+      background: var(--light);
+      padding: 30px 20px;
+      border-right: 1px solid #eaeaea;
+    }
+
+    .nav-item {
+      padding: 15px 20px;
+      margin: 5px 0;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+    }
+
+    .nav-item:hover {
+      background: white;
+      box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .nav-item.active {
+      background: white;
+      color: var(--primary);
+      font-weight: bold;
+      box-shadow: 0 5px 15px rgba(67, 97, 238, 0.2);
+    }
+
+    .nav-icon {
+      margin-right: 10px;
+      font-size: 1.2rem;
+    }
+
+    .main-content {
+      padding: 30px;
+    }
+
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.5s;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 25px;
+      margin-bottom: 25px;
+      box-shadow: 0 5px 20px rgba(0, 0, 0, 0.05);
+      border: 1px solid #eaeaea;
+    }
+
+    .card-title {
+      font-size: 1.3rem;
+      color: var(--dark);
       margin-bottom: 20px;
-      border-radius: 5px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid var(--light);
+      display: flex;
+      align-items: center;
+    }
+
+    .card-title i {
+      margin-right: 10px;
+      color: var(--primary);
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .status-card {
+      padding: 20px;
+      border-radius: 10px;
+      color: white;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .status-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      background: rgba(0, 0, 0, 0.1);
+      z-index: 1;
+    }
+
+    .status-card>* {
+      position: relative;
+      z-index: 2;
+    }
+
+    .status-card.wifi {
+      background: linear-gradient(135deg, var(--success), #3a9db9);
+    }
+
+    .status-card.eth {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+    }
+
+    .status-card.ap {
+      background: linear-gradient(135deg, var(--warning), #c2185b);
+    }
+
+    .status-indicator {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
     }
 
     .status-online {
-      background-color: #d4edda;
+      background: #4ade80;
     }
 
     .status-offline {
-      background-color: #f8d7da;
+      background: #f87171;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #444;
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 12px 15px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 1rem;
+      transition: all 0.3s;
+    }
+
+    .form-control:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.1);
+      outline: none;
+    }
+
+    .btn {
+      padding: 12px 25px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn i {
+      margin-right: 8px;
+    }
+
+    .btn-primary {
+      background: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--secondary);
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-success:hover {
+      background: #3a9db9;
+      transform: translateY(-2px);
     }
 
     .wifi-list {
       max-height: 300px;
       overflow-y: auto;
-      margin: 10px 0;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      margin: 15px 0;
     }
 
     .wifi-item {
-      padding: 10px;
+      padding: 15px;
       border-bottom: 1px solid #eee;
       cursor: pointer;
+      transition: all 0.3s;
     }
 
     .wifi-item:hover {
-      background-color: #f5f5f5;
+      background: #f8f9ff;
     }
 
-    .form-group {
-      margin-bottom: 15px;
+    .wifi-item.selected {
+      background: rgba(67, 97, 238, 0.1);
+      border-left: 4px solid var(--primary);
     }
 
-    label {
-      display: block;
-      margin-bottom: 5px;
+    .mode-selector {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 25px;
+    }
+
+    .mode-option {
+      padding: 20px;
+      text-align: center;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .mode-option:hover {
+      border-color: var(--primary);
+      background: #f8f9ff;
+    }
+
+    .mode-option.active {
+      border-color: var(--primary);
+      background: rgba(67, 97, 238, 0.1);
+      color: var(--primary);
       font-weight: bold;
     }
 
-    input[type="text"],
-    input[type="password"] {
-      width: 100%;
-      padding: 8px;
+    .mode-icon {
+      font-size: 2rem;
+      margin-bottom: 10px;
+      display: block;
     }
 
-    button {
-      padding: 10px 20px;
-      background-color: #007bff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
+    .toast {
+      position: fixed;
+      bottom: 30px;
+      right: 30px;
+      padding: 15px 25px;
+      background: white;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      display: flex;
+      align-items: center;
+      z-index: 1000;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all 0.3s;
     }
 
-    button:hover {
-      background-color: #0056b3;
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
     }
 
-    .tab {
-      overflow: hidden;
-      border: 1px solid #ccc;
-      background-color: #f1f1f1;
+    .toast-success {
+      border-left: 4px solid #28a745;
     }
 
-    .tab button {
-      background-color: inherit;
-      float: left;
-      border: none;
-      outline: none;
-      cursor: pointer;
-      padding: 14px 16px;
-      transition: 0.3s;
+    .toast-error {
+      border-left: 4px solid #dc3545;
     }
 
-    .tab button:hover {
-      background-color: #ddd;
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
-    .tab button.active {
-      background-color: #ccc;
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.5;
+      }
     }
 
-    .tabcontent {
-      display: none;
-      padding: 6px 12px;
-      border: 1px solid #ccc;
-      border-top: none;
+    @media (max-width: 768px) {
+      .content {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: flex;
+        overflow-x: auto;
+        padding: 15px;
+      }
+
+      .nav-item {
+        white-space: nowrap;
+        margin: 0 10px;
+      }
     }
   </style>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 
 <body>
   <div class="container">
-    <h1>WT32-ETH01 網路設定</h1>
-
-    <!-- 網路狀態顯示 -->
-    <div id="networkStatus" class="status"></div>
-
-    <!-- 標籤頁 -->
-    <div class="tab">
-      <button class="tablinks active" onclick="openTab(event, 'wifi')">WiFi 設定</button>
-      <button class="tablinks" onclick="openTab(event, 'ethernet')">乙太網路</button>
+    <div class="header">
+      <h1>WT32-ETH01</h1>
+      <div class="subtitle">雙網路配置系統 - WiFi + 乙太網路</div>
     </div>
 
-    <!-- WiFi設定頁面 -->
-    <div id="wifi" class="tabcontent" style="display: block;">
-      <div class="section">
-        <h2>WiFi 設定</h2>
-        <button onclick="scanWifi()">掃描網路</button>
-
-        <div id="wifiList" class="wifi-list"></div>
-
-        <div class="form-group">
-          <label for="wifiSsid">SSID</label>
-          <input type="text" id="wifiSsid">
+    <div class="content">
+      <div class="sidebar">
+        <div class="nav-item active" data-tab="dashboard">
+          <i class="nav-icon fas fa-tachometer-alt"></i>
+          儀表板
         </div>
-
-        <div class="form-group">
-          <label for="wifiPassword">密碼</label>
-          <input type="password" id="wifiPassword">
+        <div class="nav-item" data-tab="wifi">
+          <i class="nav-icon fas fa-wifi"></i>
+          WiFi 設定
         </div>
-
-        <button onclick="connectWifi()">連線</button>
+        <div class="nav-item" data-tab="ethernet">
+          <i class="nav-icon fas fa-network-wired"></i>
+          乙太網路
+        </div>
+        <div class="nav-item" data-tab="mode">
+          <i class="nav-icon fas fa-cog"></i>
+          網路模式
+        </div>
+        <div class="nav-item" data-tab="system">
+          <i class="nav-icon fas fa-sliders-h"></i>
+          系統設定
+        </div>
+        <div class="nav-item" data-tab="spiffs">
+          <i class="nav-icon fas fa-sliders-h"></i>
+          SPIFFS檔案系統
+        </div>
       </div>
-    </div>
 
-    <!-- 乙太網路設定頁面 -->
-    <div id="ethernet" class="tabcontent">
-      <div class="section">
-        <h2>乙太網路設定</h2>
+      <div class="main-content">
+        <!-- 儀表板 -->
+        <div id="dashboard" class="tab-content active">
+          <div class="status-grid">
+            <div class="status-card wifi">
+              <h3><span class="status-indicator" id="wifiStatus"></span> WiFi 狀態</h3>
+              <p id="wifiInfo">載入中...</p>
+            </div>
+            <div class="status-card eth">
+              <h3><span class="status-indicator" id="ethStatus"></span> 乙太網路狀態</h3>
+              <p id="ethInfo">載入中...</p>
+            </div>
+            <div class="status-card ap">
+              <h3>目前模式</h3>
+              <p id="currentMode">載入中...</p>
+            </div>
+          </div>
 
-        <div class="form-group">
-          <label>
-            <input type="checkbox" id="ethDhcp" checked> 使用 DHCP
-          </label>
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-bolt"></i> 快速操作</h3>
+            <div class="form-row">
+              <button class="btn btn-primary" onclick="switchTab('wifi')">
+                <i class="fas fa-wifi"></i> 設定 WiFi
+              </button>
+              <button class="btn btn-success" onclick="scanWifi()">
+                <i class="fas fa-search"></i> 掃描網路
+              </button>
+              <button class="btn btn-primary" onclick="switchTab('mode')">
+                <i class="fas fa-cog"></i> 切換模式
+              </button>
+              <button class="btn btn-primary" onclick="rebootDevice()">
+                <i class="fas fa-redo"></i> 重新啟動
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-info-circle"></i> 系統資訊</h3>
+            <p id="systemInfo">載入系統資訊...</p>
+          </div>
         </div>
 
-        <div id="staticConfig" style="display: none;">
-          <div class="form-group">
-            <label for="ethIp">IP 位址</label>
-            <input type="text" id="ethIp" placeholder="192.168.1.100">
-          </div>
+        <!-- WiFi設定 -->
+        <div id="wifi" class="tab-content">
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-wifi"></i> WiFi 設定</h3>
 
-          <div class="form-group">
-            <label for="ethGateway">閘道器</label>
-            <input type="text" id="ethGateway" placeholder="192.168.1.1">
-          </div>
+            <div class="form-group">
+              <button class="btn btn-success" onclick="scanWifi()">
+                <i class="fas fa-search"></i> 掃描 WiFi 網路
+              </button>
+            </div>
 
-          <div class="form-group">
-            <label for="ethSubnet">子網路遮罩</label>
-            <input type="text" id="ethSubnet" placeholder="255.255.255.0">
-          </div>
+            <div id="wifiList" class="wifi-list">
+              <div style="padding: 40px; text-align: center; color: #666;">
+                <i class="fas fa-wifi" style="font-size: 2rem; display: block; margin-bottom: 10px;"></i>
+                點擊上方按鈕掃描 WiFi 網路
+              </div>
+            </div>
 
-          <div class="form-group">
-            <label for="ethDns1">主要 DNS</label>
-            <input type="text" id="ethDns1" placeholder="8.8.8.8">
-          </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="wifiSsid">WiFi 名稱 (SSID)</label>
+                <input type="text" id="wifiSsid" class="form-control" placeholder="輸入 WiFi 名稱">
+              </div>
+              <div class="form-group">
+                <label for="wifiPassword">密碼</label>
+                <input type="password" id="wifiPassword" class="form-control" placeholder="輸入 WiFi 密碼">
+              </div>
+            </div>
 
-          <div class="form-group">
-            <label for="ethDns2">次要 DNS</label>
-            <input type="text" id="ethDns2" placeholder="8.8.4.4">
+            <button class="btn btn-primary" onclick="connectWifi()">
+              <i class="fas fa-plug"></i> 連接到 WiFi
+            </button>
           </div>
         </div>
 
-        <button onclick="saveEthConfig()">儲存設定</button>
+        <!-- 乙太網路設定 -->
+        <div id="ethernet" class="tab-content">
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-network-wired"></i> 乙太網路設定</h3>
+
+            <div class="form-group">
+              <label style="display: flex; align-items: center; cursor: pointer;">
+                <input type="checkbox" id="ethDhcp" style="margin-right: 10px;" checked>
+                自動取得 IP (DHCP)
+              </label>
+            </div>
+
+            <div id="staticConfig" style="display: none;">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="ethIp">IP 位址</label>
+                  <input type="text" id="ethIp" class="form-control" placeholder="192.168.1.100">
+                </div>
+                <div class="form-group">
+                  <label for="ethSubnet">子網路遮罩</label>
+                  <input type="text" id="ethSubnet" class="form-control" placeholder="255.255.255.0">
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="ethGateway">閘道器</label>
+                <input type="text" id="ethGateway" class="form-control" placeholder="192.168.1.1">
+              </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveEthConfig()">
+              <i class="fas fa-save"></i> 儲存設定
+            </button>
+          </div>
+        </div>
+
+        <!-- 網路模式 -->
+        <div id="mode" class="tab-content">
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-cog"></i> 選擇網路模式</h3>
+
+            <div class="mode-selector">
+              <div class="mode-option" data-mode="0" onclick="selectMode(0)">
+                <i class="mode-icon fas fa-broadcast-tower"></i>
+                <div>AP 模式</div>
+                <small>初始設定模式</small>
+              </div>
+              <div class="mode-option" data-mode="1" onclick="selectMode(1)">
+                <i class="mode-icon fas fa-wifi"></i>
+                <div>WiFi 模式</div>
+                <small>僅使用 WiFi</small>
+              </div>
+              <div class="mode-option" data-mode="2" onclick="selectMode(2)">
+                <i class="mode-icon fas fa-network-wired"></i>
+                <div>乙太網路模式</div>
+                <small>僅使用有線網路</small>
+              </div>
+              <div class="mode-option" data-mode="3" onclick="selectMode(3)">
+                <i class="mode-icon fas fa-sitemap"></i>
+                <div>雙網路模式</div>
+                <small>同時使用 WiFi + 有線</small>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <button class="btn btn-primary" onclick="saveNetworkMode()">
+                <i class="fas fa-check"></i> 套用模式
+              </button>
+              <span style="margin-left: 15px; color: #666; font-size: 0.9rem;">
+                選擇後需要重新啟動生效
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 系統設定 -->
+        <div id="system" class="tab-content">
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-sliders-h"></i> 系統設定</h3>
+
+            <div class="form-group">
+              <button class="btn btn-success" onclick="loadConfig()">
+                <i class="fas fa-sync-alt"></i> 載入設定
+              </button>
+              <button class="btn btn-primary" onclick="saveAllConfig()" style="margin-left: 10px;">
+                <i class="fas fa-save"></i> 儲存所有設定
+              </button>
+            </div>
+
+            <div class="form-group">
+              <button class="btn btn-primary" onclick="rebootDevice()">
+                <i class="fas fa-redo"></i> 重新啟動系統
+              </button>
+              <button class="btn" onclick="resetConfig()" style="margin-left: 10px; background: #f8f9fa; color: #666;">
+                <i class="fas fa-undo"></i> 恢復預設值
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SPIFFS檔案系統 -->
+        <div id="spiffs" class="tab-content">
+          <div class="card">
+            <h3 class="card-title"><i class="fas fa-folder"></i> SPIFFS 檔案系統</h3>
+
+            <div class="form-group">
+              <button class="btn btn-primary" onclick="listFiles()">
+                <i class="fas fa-list"></i> 列出檔案
+              </button>
+              <button class="btn btn-success" onclick="refreshFileList()" style="margin-left: 10px;">
+                <i class="fas fa-sync-alt"></i> 重新整理
+              </button>
+            </div>
+
+            <div id="fileList" class="wifi-list">
+              <div style="padding: 20px; text-align: center; color: #666;">
+                點擊上方按鈕列出檔案
+              </div>
+            </div>
+
+            <div class="form-group">
+              <div style="font-size: 0.9rem; color: #666;">
+                <i class="fas fa-info-circle"></i> 總空間: <span id="totalSpace">-</span> |
+                已使用: <span id="usedSpace">-</span> |
+                可用: <span id="freeSpace">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
-  <script>
-    // 初始化
-    document.addEventListener('DOMContentLoaded', function () {
-      updateNetworkStatus();
-      loadEthConfig();
+  <!-- Toast訊息 -->
+  <div id="toast" class="toast">
+    <div class="toast-icon"></div>
+    <div class="toast-message"></div>
+  </div>
 
-      // DHCP 勾選框事件
-      document.getElementById('ethDhcp').addEventListener('change', function () {
-        document.getElementById('staticConfig').style.display =
-          this.checked ? 'none' : 'block';
+
+  <script>
+    // 全局變數
+    let selectedWifi = null;
+    let selectedMode = 0;
+    let currentConfig = {};
+
+    // 頁面加載
+    document.addEventListener('DOMContentLoaded', function () {
+      // 設置導航點擊
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.addEventListener('click', function () {
+          document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+          this.classList.add('active');
+          const tab = this.getAttribute('data-tab');
+          switchTab(tab);
+        });
       });
+
+      // 設置DHCP切換
+      document.getElementById('ethDhcp').addEventListener('change', function () {
+        document.getElementById('staticConfig').style.display = this.checked ? 'none' : 'block';
+      });
+
+      // 加載狀態
+      updateNetworkStatus();
+      loadConfig();
+
+      // 定時更新
+      setInterval(updateNetworkStatus, 5000);
     });
 
-    // 標籤頁切換
-    function openTab(evt, tabName) {
-      var i, tabcontent, tablinks;
-      tabcontent = document.getElementsByClassName("tabcontent");
-      for (i = 0; i < tabcontent.length; i++) {
-        tabcontent[i].style.display = "none";
-      }
-      tablinks = document.getElementsByClassName("tablinks");
-      for (i = 0; i < tablinks.length; i++) {
-        tablinks[i].className = tablinks[i].className.replace(" active", "");
-      }
-      document.getElementById(tabName).style.display = "block";
-      evt.currentTarget.className += " active";
+    // 切換標籤頁
+    function switchTab(tabName) {
+      document.querySelectorAll('.tab-content').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.getElementById(tabName).classList.add('active');
     }
 
-    // 掃描WiFi網路
-    function scanWifi() {
-      fetch('/api/scan')
-        .then(response => response.json())
-        .then(data => {
-          const wifiList = document.getElementById('wifiList');
-          wifiList.innerHTML = '';
+    // 顯示Toast訊息
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      const icon = toast.querySelector('.toast-icon');
+      const messageDiv = toast.querySelector('.toast-message');
 
-          data.forEach(network => {
-            const item = document.createElement('div');
-            item.className = 'wifi-item';
-            item.innerHTML = `
-                            <strong>${network.ssid}</strong><br>
-                            訊號強度: ${network.rssi} dBm | 
-                            通道: ${network.channel} |
-                            加密: ${getEncryptionType(network.encryption)}
-                        `;
-            item.onclick = () => {
-              document.getElementById('wifiSsid').value = network.ssid;
-            };
-            wifiList.appendChild(item);
-          });
+      toast.className = 'toast';
+      toast.classList.add(`toast-${type}`);
+      toast.classList.add('show');
+
+      icon.innerHTML = type === 'success' ?
+        '<i class="fas fa-check-circle" style="color: #28a745; font-size: 1.5rem; margin-right: 15px;"></i>' :
+        '<i class="fas fa-exclamation-circle" style="color: #dc3545; font-size: 1.5rem; margin-right: 15px;"></i>';
+
+      messageDiv.textContent = message;
+
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // 更新網路狀態
+    async function updateNetworkStatus() {
+      try {
+        const response = await fetch('/api/network/status');
+        const data = await response.json();
+
+        // 更新WiFi狀態
+        const wifiStatus = document.getElementById('wifiStatus');
+        const wifiInfo = document.getElementById('wifiInfo');
+
+        if (data.wifi_connected) {
+          wifiStatus.className = 'status-indicator status-online';
+          wifiInfo.innerHTML = `<strong>${data.wifi_ssid}</strong><br>IP: ${data.wifi_ip}<br>訊號: ${data.wifi_rssi || '-'} dBm`;
+        } else {
+          wifiStatus.className = 'status-indicator status-offline';
+          wifiInfo.textContent = '未連接';
+        }
+
+        // 更新乙太網路狀態
+        const ethStatus = document.getElementById('ethStatus');
+        const ethInfo = document.getElementById('ethInfo');
+
+        if (data.eth_connected) {
+          ethStatus.className = 'status-indicator status-online';
+          ethInfo.innerHTML = `<strong>已連接</strong><br>IP: ${data.eth_ip}<br>閘道器: ${data.eth_gateway}`;
+        } else {
+          ethStatus.className = 'status-indicator status-offline';
+          ethInfo.textContent = '未連接';
+        }
+
+        // 更新模式
+        const currentMode = document.getElementById('currentMode');
+        const modeText = ['AP模式', 'WiFi模式', '乙太網路模式', '雙網路模式'][data.current_mode];
+        currentMode.textContent = modeText;
+
+        // 更新系統資訊
+        const systemInfo = document.getElementById('systemInfo');
+        let info = `目前模式: ${modeText}<br>`;
+
+        if (data.ap_ip) {
+          info += `AP IP: ${data.ap_ip}<br>`;
+        }
+        if (data.current_ip) {
+          info += `訪問地址: http://${data.current_ip}`;
+        }
+
+        systemInfo.innerHTML = info;
+
+      } catch (error) {
+        console.error('更新狀態失敗:', error);
+      }
+    }
+
+    // 掃描WiFi
+    async function scanWifi() {
+      try {
+        showToast('正在掃描WiFi...', 'success');
+
+        const response = await fetch('/api/scan');
+        const networks = await response.json();
+
+        const container = document.getElementById('wifiList');
+        container.innerHTML = '';
+
+        if (networks.length === 0) {
+          container.innerHTML = `
+                        <div style="padding: 40px; text-align: center; color: #666;">
+                            <i class="fas fa-wifi-slash" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                            未發現WiFi網路
+                        </div>
+                    `;
+          showToast('未發現WiFi網路', 'error');
+          return;
+        }
+
+        networks.forEach(network => {
+          const item = document.createElement('div');
+          item.className = 'wifi-item';
+          item.innerHTML = `
+                        <strong>${network.ssid || '隱藏網路'}</strong><br>
+                        <small>訊號: ${network.rssi} dBm | 通道: ${network.channel} | 加密: ${getEncryption(network.encryption)}</small>
+                    `;
+
+          item.onclick = () => {
+            document.querySelectorAll('.wifi-item').forEach(el => el.classList.remove('selected'));
+            item.classList.add('selected');
+            selectedWifi = network;
+            document.getElementById('wifiSsid').value = network.ssid || '';
+          };
+
+          container.appendChild(item);
         });
+
+        showToast(`發現 ${networks.length} 個網路`, 'success');
+      } catch (error) {
+        console.error('掃描失敗:', error);
+        showToast('掃描失敗', 'error');
+      }
     }
 
     // 連接WiFi
-    function connectWifi() {
-      const ssid = document.getElementById('wifiSsid').value;
+    async function connectWifi() {
+      let ssid = document.getElementById('wifiSsid').value;
       const password = document.getElementById('wifiPassword').value;
 
-      fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ssid: ssid, password: password })
-      })
-        .then(response => response.json())
-        .then(data => {
-          alert(data.message);
-          if (data.success) {
-            updateNetworkStatus();
-          }
+      if (!ssid && selectedWifi) {
+        ssid = selectedWifi.ssid;
+      }
+
+      if (!ssid) {
+        showToast('請輸入或選擇WiFi名稱', 'error');
+        return;
+      }
+
+      try {
+        showToast('正在連接WiFi...', 'success');
+
+        const response = await fetch('/api/connect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ssid, password })
         });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showToast('WiFi連接成功', 'success');
+          updateNetworkStatus();
+        } else {
+          showToast(result.message || '連接失敗', 'error');
+        }
+      } catch (error) {
+        console.error('連接失敗:', error);
+        showToast('連接失敗', 'error');
+      }
     }
 
-    // 載入乙太網路設定
-    function loadEthConfig() {
-      fetch('/api/eth/config')
-        .then(response => response.json())
-        .then(data => {
-          document.getElementById('ethDhcp').checked = data.dhcp;
-          document.getElementById('ethIp').value = data.ip || '';
-          document.getElementById('ethGateway').value = data.gateway || '';
-          document.getElementById('ethSubnet').value = data.subnet || '';
-          document.getElementById('ethDns1').value = data.dns1 || '';
-          document.getElementById('ethDns2').value = data.dns2 || '';
+    // 選擇模式
+    function selectMode(mode) {
+      selectedMode = mode;
+      document.querySelectorAll('.mode-option').forEach(opt => {
+        opt.classList.remove('active');
+      });
+      document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
+    }
 
-          // 顯示/隱藏靜態設定
-          document.getElementById('staticConfig').style.display =
-            data.dhcp ? 'none' : 'block';
+    // 儲存網路模式
+    async function saveNetworkMode() {
+      try {
+        const response = await fetch('/api/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: selectedMode })
         });
+
+        const result = await response.json();
+
+        if (result.success) {
+          showToast('模式已設置，請重新啟動生效', 'success');
+
+          if (confirm('是否立即重新啟動？')) {
+            rebootDevice();
+          }
+        } else {
+          showToast(result.message, 'error');
+        }
+      } catch (error) {
+        console.error('設置模式失敗:', error);
+        showToast('設置失敗', 'error');
+      }
     }
 
     // 儲存乙太網路設定
-    function saveEthConfig() {
+    async function saveEthConfig() {
       const config = {
         dhcp: document.getElementById('ethDhcp').checked,
         ip: document.getElementById('ethIp').value,
         gateway: document.getElementById('ethGateway').value,
-        subnet: document.getElementById('ethSubnet').value,
-        dns1: document.getElementById('ethDns1').value,
-        dns2: document.getElementById('ethDns2').value
+        subnet: document.getElementById('ethSubnet').value
       };
 
-      fetch('/api/eth/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
-      })
-        .then(response => response.json())
-        .then(data => {
-          alert(data.message);
-          if (data.success) {
-            setTimeout(() => {
-              fetch('/api/reboot', { method: 'POST' });
-              alert('系統將重新啟動...');
-            }, 1000);
-          }
+      if (!config.dhcp) {
+        if (!config.ip || !config.gateway || !config.subnet) {
+          showToast('請填寫所有靜態IP欄位', 'error');
+          return;
+        }
+      }
+
+      try {
+        const response = await fetch('/api/eth/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config)
         });
+
+        const result = await response.json();
+        showToast(result.message, result.success ? 'success' : 'error');
+
+        if (result.success) {
+          updateNetworkStatus();
+        }
+      } catch (error) {
+        console.error('保存失敗:', error);
+        showToast('保存失敗', 'error');
+      }
     }
 
-    // 更新網路狀態
-    function updateNetworkStatus() {
-      fetch('/api/network/status')
-        .then(response => response.json())
-        .then(data => {
-          const statusDiv = document.getElementById('networkStatus');
-          let statusHtml = '<h3>網路狀態</h3>';
+    // 載入配置
+    async function loadConfig() {
+      try {
+        const response = await fetch('/api/config/load');
+        currentConfig = await response.json();
 
-          if (data.eth_connected) {
-            statusHtml += `
-                            <div class="status-online">
-                                <strong>乙太網路: 已連線</strong><br>
-                                IP: ${data.eth_ip}<br>
-                                MAC: ${data.eth_mac}
-                            </div>
-                        `;
-          } else {
-            statusHtml += `
-                            <div class="status-offline">
-                                <strong>乙太網路: 未連線</strong>
-                            </div>
-                        `;
-          }
+        // 填充表單
+        document.getElementById('wifiSsid').value = currentConfig.wifi_ssid || '';
+        document.getElementById('ethDhcp').checked = currentConfig.eth_dhcp;
+        document.getElementById('ethIp').value = currentConfig.eth_ip || '';
+        document.getElementById('ethGateway').value = currentConfig.eth_gateway || '';
+        document.getElementById('ethSubnet').value = currentConfig.eth_subnet || '';
 
-          if (data.wifi_connected) {
-            statusHtml += `
-                            <div class="status-online">
-                                <strong>WiFi: 已連線</strong><br>
-                                SSID: ${data.wifi_ssid}<br>
-                                IP: ${data.wifi_ip}
-                            </div>
-                        `;
-          } else {
-            statusHtml += `
-                            <div class="status-offline">
-                                <strong>WiFi: 未連線</strong>
-                            </div>
-                        `;
-          }
+        // 更新模式選擇
+        selectMode(currentConfig.mode);
 
-          statusDiv.innerHTML = statusHtml;
-        });
+        // 更新靜態配置顯示
+        document.getElementById('staticConfig').style.display =
+          currentConfig.eth_dhcp ? 'none' : 'block';
+
+        showToast('配置已載入', 'success');
+      } catch (error) {
+        console.error('載入配置失敗:', error);
+        showToast('載入配置失敗', 'error');
+      }
     }
 
-    // 輔助函數：取得加密類型文字
-    function getEncryptionType(type) {
-      const types = {
+    // 儲存所有配置
+    async function saveAllConfig() {
+      try {
+        const response = await fetch('/api/config/save', {
+          method: 'POST'
+        });
+
+        const result = await response.json();
+        showToast(result.message, 'success');
+      } catch (error) {
+        console.error('保存失敗:', error);
+        showToast('保存失敗', 'error');
+      }
+    }
+
+    // 重新啟動設備
+    async function rebootDevice() {
+      if (confirm('確定要重新啟動系統嗎？')) {
+        try {
+          await fetch('/api/reboot', { method: 'POST' });
+          showToast('系統將在3秒後重新啟動', 'success');
+
+          setTimeout(() => {
+            showToast('請稍後刷新頁面', 'success');
+          }, 3000);
+        } catch (error) {
+          console.error('重啟失敗:', error);
+        }
+      }
+    }
+
+    // 重置配置
+    function resetConfig() {
+      if (confirm('確定要重置所有設定為預設值嗎？')) {
+        document.getElementById('wifiSsid').value = '';
+        document.getElementById('wifiPassword').value = '';
+        document.getElementById('ethDhcp').checked = true;
+        document.getElementById('ethIp').value = '192.168.1.100';
+        document.getElementById('ethGateway').value = '192.168.1.1';
+        document.getElementById('ethSubnet').value = '255.255.255.0';
+        document.getElementById('staticConfig').style.display = 'none';
+        selectMode(0);
+
+        showToast('配置已重置為預設值', 'success');
+      }
+    }
+
+    // 輔助函數
+    function getEncryption(type) {
+      const enc = {
         0: "開放",
         1: "WEP",
-        2: "WPA_PSK",
-        3: "WPA2_PSK",
-        4: "WPA_WPA2_PSK",
-        5: "WPA2_ENTERPRISE"
+        2: "WPA",
+        3: "WPA2",
+        4: "WPA/WPA2",
+        5: "WPA2 Enterprise",
+        6: "WPA3",
+        7: "WPA2/WPA3"
       };
-      return types[type] || "未知";
+      return enc[type] || "未知";
+    }
+
+    // 列出SPIFFS檔案
+    async function listFiles() {
+      try {
+        const response = await fetch('/api/files/list');
+        const files = await response.json();
+
+        const container = document.getElementById('fileList');
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<tr style="background: #f8f9fa;">';
+        html += '<th style="padding: 10px; text-align: left;">檔案名稱</th>';
+        html += '<th style="padding: 10px; text-align: right;">大小</th>';
+        html += '<th style="padding: 10px; text-align: center;">類型</th>';
+        html += '</tr>';
+
+        files.forEach(file => {
+          html += '<tr style="border-bottom: 1px solid #eee;">';
+          html += `<td style="padding: 10px;">${file.name}</td>`;
+          html += `<td style="padding: 10px; text-align: right;">${formatBytes(file.size)}</td>`;
+          html += `<td style="padding: 10px; text-align: center;">${file.is_directory ? '📁' : '📄'}</td>`;
+          html += '</tr>';
+
+          // 如果是config.json檔案，顯示內容
+          if (file.name === '/config.json' && file.content) {
+            html += '<tr>';
+            html += `<td colspan="3" style="padding: 10px; background: #f8f9ff; font-family: monospace; font-size: 0.9rem;">`;
+            html += `<pre>${file.content}</pre>`;
+            html += '</td>';
+            html += '</tr>';
+          }
+        });
+
+        html += '</table>';
+        container.innerHTML = html;
+
+        showToast(`列出 ${files.length} 個檔案`, 'success');
+      } catch (error) {
+        console.error('列出檔案失敗:', error);
+        showToast('列出檔案失敗', 'error');
+      }
+    }
+
+    // 重新整理檔案列表
+    function refreshFileList() {
+      listFiles();
+      updateNetworkStatus(); // 同時更新狀態以獲取空間資訊
+    }
+
+    // 更新儲存空間資訊
+    function updateStorageInfo(data) {
+      if (data.spiffs_total) {
+        const total = data.spiffs_total;
+        const used = data.spiffs_used;
+        const free = total - used;
+
+        document.getElementById('totalSpace').textContent = formatBytes(total);
+        document.getElementById('usedSpace').textContent = formatBytes(used);
+        document.getElementById('freeSpace').textContent = formatBytes(free);
+      }
+    }
+
+    // 格式化位元組為可讀格式
+    function formatBytes(bytes, decimals = 2) {
+      if (bytes === 0) return '0 Bytes';
+
+      const k = 1024;
+      const dm = decimals < 0 ? 0 : decimals;
+      const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    // 在updateNetworkStatus函數中呼叫
+    async function updateNetworkStatus() {
+      try {
+        const response = await fetch('/api/network/status');
+        const data = await response.json();
+
+        // ... 原有的狀態更新代碼 ...
+
+        // 更新儲存空間資訊
+        updateStorageInfo(data);
+
+      } catch (error) {
+        console.error('更新狀態失敗:', error);
+      }
     }
   </script>
 </body>
