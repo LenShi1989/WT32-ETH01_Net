@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WT32-ETH01 網路設定</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .section {
+      margin-bottom: 30px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+
+    .status {
+      padding: 10px;
+      margin-bottom: 20px;
+      border-radius: 5px;
+    }
+
+    .status-online {
+      background-color: #d4edda;
+    }
+
+    .status-offline {
+      background-color: #f8d7da;
+    }
+
+    .wifi-list {
+      max-height: 300px;
+      overflow-y: auto;
+      margin: 10px 0;
+    }
+
+    .wifi-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+    }
+
+    .wifi-item:hover {
+      background-color: #f5f5f5;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 8px;
+    }
+
+    button {
+      padding: 10px 20px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    .tab {
+      overflow: hidden;
+      border: 1px solid #ccc;
+      background-color: #f1f1f1;
+    }
+
+    .tab button {
+      background-color: inherit;
+      float: left;
+      border: none;
+      outline: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      transition: 0.3s;
+    }
+
+    .tab button:hover {
+      background-color: #ddd;
+    }
+
+    .tab button.active {
+      background-color: #ccc;
+    }
+
+    .tabcontent {
+      display: none;
+      padding: 6px 12px;
+      border: 1px solid #ccc;
+      border-top: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>WT32-ETH01 網路設定</h1>
+
+    <!-- 網路狀態顯示 -->
+    <div id="networkStatus" class="status"></div>
+
+    <!-- 標籤頁 -->
+    <div class="tab">
+      <button class="tablinks active" onclick="openTab(event, 'wifi')">WiFi 設定</button>
+      <button class="tablinks" onclick="openTab(event, 'ethernet')">乙太網路</button>
+    </div>
+
+    <!-- WiFi設定頁面 -->
+    <div id="wifi" class="tabcontent" style="display: block;">
+      <div class="section">
+        <h2>WiFi 設定</h2>
+        <button onclick="scanWifi()">掃描網路</button>
+
+        <div id="wifiList" class="wifi-list"></div>
+
+        <div class="form-group">
+          <label for="wifiSsid">SSID</label>
+          <input type="text" id="wifiSsid">
+        </div>
+
+        <div class="form-group">
+          <label for="wifiPassword">密碼</label>
+          <input type="password" id="wifiPassword">
+        </div>
+
+        <button onclick="connectWifi()">連線</button>
+      </div>
+    </div>
+
+    <!-- 乙太網路設定頁面 -->
+    <div id="ethernet" class="tabcontent">
+      <div class="section">
+        <h2>乙太網路設定</h2>
+
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="ethDhcp" checked> 使用 DHCP
+          </label>
+        </div>
+
+        <div id="staticConfig" style="display: none;">
+          <div class="form-group">
+            <label for="ethIp">IP 位址</label>
+            <input type="text" id="ethIp" placeholder="192.168.1.100">
+          </div>
+
+          <div class="form-group">
+            <label for="ethGateway">閘道器</label>
+            <input type="text" id="ethGateway" placeholder="192.168.1.1">
+          </div>
+
+          <div class="form-group">
+            <label for="ethSubnet">子網路遮罩</label>
+            <input type="text" id="ethSubnet" placeholder="255.255.255.0">
+          </div>
+
+          <div class="form-group">
+            <label for="ethDns1">主要 DNS</label>
+            <input type="text" id="ethDns1" placeholder="8.8.8.8">
+          </div>
+
+          <div class="form-group">
+            <label for="ethDns2">次要 DNS</label>
+            <input type="text" id="ethDns2" placeholder="8.8.4.4">
+          </div>
+        </div>
+
+        <button onclick="saveEthConfig()">儲存設定</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 初始化
+    document.addEventListener('DOMContentLoaded', function () {
+      updateNetworkStatus();
+      loadEthConfig();
+
+      // DHCP 勾選框事件
+      document.getElementById('ethDhcp').addEventListener('change', function () {
+        document.getElementById('staticConfig').style.display =
+          this.checked ? 'none' : 'block';
+      });
+    });
+
+    // 標籤頁切換
+    function openTab(evt, tabName) {
+      var i, tabcontent, tablinks;
+      tabcontent = document.getElementsByClassName("tabcontent");
+      for (i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      tablinks = document.getElementsByClassName("tablinks");
+      for (i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      evt.currentTarget.className += " active";
+    }
+
+    // 掃描WiFi網路
+    function scanWifi() {
+      fetch('/api/scan')
+        .then(response => response.json())
+        .then(data => {
+          const wifiList = document.getElementById('wifiList');
+          wifiList.innerHTML = '';
+
+          data.forEach(network => {
+            const item = document.createElement('div');
+            item.className = 'wifi-item';
+            item.innerHTML = `
+                            <strong>${network.ssid}</strong><br>
+                            訊號強度: ${network.rssi} dBm | 
+                            通道: ${network.channel} |
+                            加密: ${getEncryptionType(network.encryption)}
+                        `;
+            item.onclick = () => {
+              document.getElementById('wifiSsid').value = network.ssid;
+            };
+            wifiList.appendChild(item);
+          });
+        });
+    }
+
+    // 連接WiFi
+    function connectWifi() {
+      const ssid = document.getElementById('wifiSsid').value;
+      const password = document.getElementById('wifiPassword').value;
+
+      fetch('/api/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ssid: ssid, password: password })
+      })
+        .then(response => response.json())
+        .then(data => {
+          alert(data.message);
+          if (data.success) {
+            updateNetworkStatus();
+          }
+        });
+    }
+
+    // 載入乙太網路設定
+    function loadEthConfig() {
+      fetch('/api/eth/config')
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('ethDhcp').checked = data.dhcp;
+          document.getElementById('ethIp').value = data.ip || '';
+          document.getElementById('ethGateway').value = data.gateway || '';
+          document.getElementById('ethSubnet').value = data.subnet || '';
+          document.getElementById('ethDns1').value = data.dns1 || '';
+          document.getElementById('ethDns2').value = data.dns2 || '';
+
+          // 顯示/隱藏靜態設定
+          document.getElementById('staticConfig').style.display =
+            data.dhcp ? 'none' : 'block';
+        });
+    }
+
+    // 儲存乙太網路設定
+    function saveEthConfig() {
+      const config = {
+        dhcp: document.getElementById('ethDhcp').checked,
+        ip: document.getElementById('ethIp').value,
+        gateway: document.getElementById('ethGateway').value,
+        subnet: document.getElementById('ethSubnet').value,
+        dns1: document.getElementById('ethDns1').value,
+        dns2: document.getElementById('ethDns2').value
+      };
+
+      fetch('/api/eth/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+      })
+        .then(response => response.json())
+        .then(data => {
+          alert(data.message);
+          if (data.success) {
+            setTimeout(() => {
+              fetch('/api/reboot', { method: 'POST' });
+              alert('系統將重新啟動...');
+            }, 1000);
+          }
+        });
+    }
+
+    // 更新網路狀態
+    function updateNetworkStatus() {
+      fetch('/api/network/status')
+        .then(response => response.json())
+        .then(data => {
+          const statusDiv = document.getElementById('networkStatus');
+          let statusHtml = '<h3>網路狀態</h3>';
+
+          if (data.eth_connected) {
+            statusHtml += `
+                            <div class="status-online">
+                                <strong>乙太網路: 已連線</strong><br>
+                                IP: ${data.eth_ip}<br>
+                                MAC: ${data.eth_mac}
+                            </div>
+                        `;
+          } else {
+            statusHtml += `
+                            <div class="status-offline">
+                                <strong>乙太網路: 未連線</strong>
+                            </div>
+                        `;
+          }
+
+          if (data.wifi_connected) {
+            statusHtml += `
+                            <div class="status-online">
+                                <strong>WiFi: 已連線</strong><br>
+                                SSID: ${data.wifi_ssid}<br>
+                                IP: ${data.wifi_ip}
+                            </div>
+                        `;
+          } else {
+            statusHtml += `
+                            <div class="status-offline">
+                                <strong>WiFi: 未連線</strong>
+                            </div>
+                        `;
+          }
+
+          statusDiv.innerHTML = statusHtml;
+        });
+    }
+
+    // 輔助函數：取得加密類型文字
+    function getEncryptionType(type) {
+      const types = {
+        0: "開放",
+        1: "WEP",
+        2: "WPA_PSK",
+        3: "WPA2_PSK",
+        4: "WPA_WPA2_PSK",
+        5: "WPA2_ENTERPRISE"
+      };
+      return types[type] || "未知";
+    }
+  </script>
+</body>
+
+</html>
