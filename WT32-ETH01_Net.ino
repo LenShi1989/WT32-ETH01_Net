@@ -37,10 +37,15 @@ String eth_ip_current = "";
 // 設定檔案路徑
 const char *CONFIG_FILE = "/config.json";
 
+// WiFi掃描相關
+unsigned long lastScanTime = 0;
+const unsigned long SCAN_INTERVAL = 30000; // 30秒掃描一次
+bool isScanning = false;
+String scanResult = "[]";
+
 // 函數聲明
 void startAPMode();
 void setupWebServer();
-void handleRoot();
 void handleScanWifi();
 void handleConnectWifi();
 void handleSetNetworkMode();
@@ -50,12 +55,14 @@ void handleReboot();
 void handleSaveConfig();
 void handleLoadConfig();
 void handleFileList();
-void saveConfigToSPIFFS();   // 改回 void
-bool loadConfigFromSPIFFS(); // 保持 bool
+void saveConfigToSPIFFS();
+bool loadConfigFromSPIFFS();
 void connectToWiFi();
 void setupEthernet();
 void WiFiEvent(WiFiEvent_t event);
 void listSPIFFSFiles();
+void performWiFiScan();
+String getEncryptionName(int encryptionType);
 
 void setup()
 {
@@ -163,6 +170,126 @@ void loop()
 
     lastCheck = millis();
   }
+
+  // 定期掃描WiFi
+  if (!isScanning && millis() - lastScanTime > SCAN_INTERVAL)
+  {
+    if (currentMode == MODE_AP || currentMode == MODE_WIFI || currentMode == MODE_BOTH)
+    {
+      performWiFiScan();
+    }
+  }
+}
+
+void performWiFiScan()
+{
+  if (isScanning)
+    return;
+
+  isScanning = true;
+  Serial.println("開始定期掃描WiFi網路...");
+
+  // 保存當前狀態
+  wl_status_t originalStatus = WiFi.status();
+
+  // 設置為STA模式進行掃描
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+
+  // 開始掃描
+  int n = WiFi.scanNetworks();
+
+  if (n == 0)
+  {
+    Serial.println("沒有發現任何WiFi網路");
+    scanResult = "[]";
+  }
+  else
+  {
+    Serial.printf("發現 %d 個WiFi網路:\n", n);
+
+    DynamicJsonDocument doc(4096);
+    JsonArray networks = doc.to<JsonArray>();
+
+    for (int i = 0; i < n; i++)
+    {
+      JsonObject network = networks.createNestedObject();
+      String ssid = WiFi.SSID(i);
+      int rssi = WiFi.RSSI(i);
+      int channel = WiFi.channel(i);
+      int encryption = WiFi.encryptionType(i);
+
+      network["ssid"] = ssid;
+      network["rssi"] = rssi;
+      network["channel"] = channel;
+      network["encryption"] = encryption;
+      network["encryption_name"] = getEncryptionName(encryption);
+
+      // 計算訊號強度等級 (0-4)
+      int signalLevel = 0;
+      if (rssi > -50)
+        signalLevel = 4;
+      else if (rssi > -60)
+        signalLevel = 3;
+      else if (rssi > -70)
+        signalLevel = 2;
+      else if (rssi > -80)
+        signalLevel = 1;
+      network["signal_level"] = signalLevel;
+
+      Serial.printf("  %d. %s (訊號: %d dBm, 通道: %d, 加密: %s)\n",
+                    i + 1, ssid.c_str(), rssi, channel, getEncryptionName(encryption).c_str());
+    }
+
+    // 序列化結果
+    String jsonString;
+    serializeJson(doc, jsonString);
+    scanResult = jsonString;
+
+    // 釋放掃描結果
+    WiFi.scanDelete();
+  }
+
+  // 恢復原來的網路模式
+  if (currentMode == MODE_AP)
+  {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
+  }
+  else if (originalStatus == WL_CONNECTED)
+  {
+    // 如果原本有WiFi連接，重新連接
+    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+  }
+
+  isScanning = false;
+  lastScanTime = millis();
+}
+
+String getEncryptionName(int encryptionType)
+{
+  switch (encryptionType)
+  {
+  case WIFI_AUTH_OPEN:
+    return "開放";
+  case WIFI_AUTH_WEP:
+    return "WEP";
+  case WIFI_AUTH_WPA_PSK:
+    return "WPA-PSK";
+  case WIFI_AUTH_WPA2_PSK:
+    return "WPA2-PSK";
+  case WIFI_AUTH_WPA_WPA2_PSK:
+    return "WPA/WPA2-PSK";
+  case WIFI_AUTH_WPA2_ENTERPRISE:
+    return "WPA2-Enterprise";
+  case WIFI_AUTH_WPA3_PSK:
+    return "WPA3-PSK";
+  case WIFI_AUTH_WPA2_WPA3_PSK:
+    return "WPA2/WPA3-PSK";
+  default:
+    return "未知";
+  }
 }
 
 void listSPIFFSFiles()
@@ -176,13 +303,6 @@ void listSPIFFSFiles()
     return;
   }
 
-  if (!root.isDirectory())
-  {
-    Serial.println("根目錄不是資料夾");
-    root.close();
-    return;
-  }
-
   File file = root.openNextFile();
   while (file)
   {
@@ -190,8 +310,7 @@ void listSPIFFSFiles()
     Serial.print(file.name());
     Serial.print(" | 大小: ");
     Serial.print(file.size());
-    Serial.print(" bytes | ");
-    Serial.println(file.isDirectory() ? "目錄" : "檔案");
+    Serial.println(" bytes");
 
     file = root.openNextFile();
   }
@@ -294,9 +413,10 @@ void setupWebServer()
   server.serveStatic("/", SPIFFS, "/index.html");
   server.serveStatic("/css", SPIFFS, "/css/");
   server.serveStatic("/js", SPIFFS, "/js/");
+  server.serveStatic("/images", SPIFFS, "/images/");
+  server.serveStatic("/favicon.ico", SPIFFS, "/favicon.ico");
 
   // API端點
-  server.on("/", HTTP_GET, handleRoot);
   server.on("/api/scan", HTTP_GET, handleScanWifi);
   server.on("/api/connect", HTTP_POST, handleConnectWifi);
   server.on("/api/mode", HTTP_POST, handleSetNetworkMode);
@@ -307,13 +427,14 @@ void setupWebServer()
   server.on("/api/config/load", HTTP_GET, handleLoadConfig);
   server.on("/api/files/list", HTTP_GET, handleFileList);
 
-  // 處理未知路徑
-  server.onNotFound([]()
-                    {
+  // 處理根路徑 - 自動重定向到index.html
+  server.on("/", HTTP_GET, []()
+            {
     if (SPIFFS.exists("/index.html")) {
-      server.sendHeader("Location", "/", true);
+      server.sendHeader("Location", "/index.html", true);
       server.send(302, "text/plain", "");
     } else {
+      // 如果index.html不存在，顯示簡易資訊
       String message = "WT32-ETH01 網路配置系統\n\n";
       message += "目前模式: ";
       switch(currentMode) {
@@ -322,8 +443,9 @@ void setupWebServer()
         case MODE_ETH: message += "乙太網路模式"; break;
         case MODE_BOTH: message += "雙網路模式"; break;
       }
-      message += "\n\n可用API:\n";
-      message += "GET /api/scan - 掃描WiFi\n";
+      message += "\n\n請上傳index.html到SPIFFS以使用完整功能\n";
+      message += "可用API:\n";
+      message += "GET /api/scan - 掃描WiFi網路\n";
       message += "POST /api/connect - 連接WiFi\n";
       message += "POST /api/mode - 設置網路模式\n";
       message += "POST /api/eth/config - 設置乙太網路\n";
@@ -331,6 +453,16 @@ void setupWebServer()
       message += "POST /api/reboot - 重啟系統\n";
       message += "GET /api/files/list - 列出檔案\n";
       server.send(200, "text/plain", message);
+    } });
+
+  // 處理未知路徑 - 返回404或重定向
+  server.onNotFound([]()
+                    {
+    if (SPIFFS.exists("/index.html")) {
+      server.sendHeader("Location", "/index.html", true);
+      server.send(302, "text/plain", "");
+    } else {
+      server.send(404, "text/plain", "404: Not Found");
     } });
 
   server.begin();
@@ -363,74 +495,25 @@ void setupWebServer()
   }
 }
 
-void handleRoot()
-{
-  if (SPIFFS.exists("/index.html"))
-  {
-    server.sendHeader("Location", "/index.html", true);
-    server.send(302, "text/plain", "");
-  }
-  else
-  {
-    String html = "<html><head><title>WT32-ETH01</title></head><body>";
-    html += "<h1>WT32-ETH01 網路配置</h1>";
-    html += "<p>目前模式: ";
-    switch (currentMode)
-    {
-    case MODE_AP:
-      html += "AP模式 (初始設定)";
-      break;
-    case MODE_WIFI:
-      html += "WiFi模式";
-      break;
-    case MODE_ETH:
-      html += "乙太網路模式";
-      break;
-    case MODE_BOTH:
-      html += "雙網路模式";
-      break;
-    }
-    html += "</p>";
-    html += "<p><a href='/api/scan'>掃描WiFi</a></p>";
-    html += "<p><a href='/api/files/list'>列出檔案</a></p>";
-    html += "</body></html>";
-    server.send(200, "text/html", html);
-  }
-}
-
 void handleScanWifi()
 {
-  Serial.println("開始掃描WiFi...");
+  Serial.println("收到WiFi掃描請求");
 
-  // 暫時設置為STA模式掃描
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(100);
-
-  int n = WiFi.scanNetworks();
-  Serial.printf("掃描到 %d 個網路\n", n);
-
-  DynamicJsonDocument doc(4096);
-  JsonArray networks = doc.to<JsonArray>();
-
-  for (int i = 0; i < n; i++)
+  // 如果正在掃描中，返回上次結果
+  if (isScanning)
   {
-    JsonObject network = networks.createNestedObject();
-    network["ssid"] = WiFi.SSID(i);
-    network["rssi"] = WiFi.RSSI(i);
-    network["channel"] = WiFi.channel(i);
-    network["encryption"] = (int)WiFi.encryptionType(i);
+    Serial.println("正在掃描中，返回上次結果");
+    server.send(200, "application/json", scanResult);
+    return;
   }
 
-  String jsonResponse;
-  serializeJson(doc, jsonResponse);
-  server.send(200, "application/json", jsonResponse);
+  // 執行新的掃描
+  performWiFiScan();
 
-  // 恢復原來的模式
-  if (currentMode == MODE_AP)
-  {
-    WiFi.mode(WIFI_AP);
-  }
+  // 返回掃描結果
+  server.send(200, "application/json", scanResult);
+
+  Serial.println("掃描結果已發送");
 }
 
 void handleConnectWifi()
@@ -636,6 +719,10 @@ void handleNetworkStatus()
   // SPIFFS狀態
   doc["spiffs_total"] = SPIFFS.totalBytes();
   doc["spiffs_used"] = SPIFFS.usedBytes();
+
+  // 掃描狀態
+  doc["is_scanning"] = isScanning;
+  doc["last_scan_time"] = lastScanTime;
 
   String jsonResponse;
   serializeJson(doc, jsonResponse);

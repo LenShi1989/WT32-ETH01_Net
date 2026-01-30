@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WT32-ETH01 網路配置</title>
+  <title>WT32-ETH01 網路配置系統</title>
   <style>
     :root {
       --primary: #4361ee;
@@ -261,7 +261,7 @@
     }
 
     .wifi-list {
-      max-height: 300px;
+      max-height: 400px;
       overflow-y: auto;
       border: 2px solid #e0e0e0;
       border-radius: 8px;
@@ -282,6 +282,23 @@
     .wifi-item.selected {
       background: rgba(67, 97, 238, 0.1);
       border-left: 4px solid var(--primary);
+    }
+
+    .signal-bars {
+      display: flex;
+      align-items: flex-end;
+      height: 20px;
+      gap: 2px;
+    }
+
+    .signal-bar {
+      width: 5px;
+      background: #ddd;
+      border-radius: 2px;
+    }
+
+    .signal-bar.active {
+      background: #4ade80;
     }
 
     .mode-selector {
@@ -420,10 +437,6 @@
           <i class="nav-icon fas fa-sliders-h"></i>
           系統設定
         </div>
-        <div class="nav-item" data-tab="spiffs">
-          <i class="nav-icon fas fa-sliders-h"></i>
-          SPIFFS檔案系統
-        </div>
       </div>
 
       <div class="main-content">
@@ -477,6 +490,7 @@
               <button class="btn btn-success" onclick="scanWifi()">
                 <i class="fas fa-search"></i> 掃描 WiFi 網路
               </button>
+              <span id="scanStatus" style="margin-left: 15px; color: #666; font-size: 0.9rem;"></span>
             </div>
 
             <div id="wifiList" class="wifi-list">
@@ -600,35 +614,21 @@
                 <i class="fas fa-undo"></i> 恢復預設值
               </button>
             </div>
-          </div>
-        </div>
-
-        <!-- SPIFFS檔案系統 -->
-        <div id="spiffs" class="tab-content">
-          <div class="card">
-            <h3 class="card-title"><i class="fas fa-folder"></i> SPIFFS 檔案系統</h3>
 
             <div class="form-group">
+              <h4>檔案系統</h4>
               <button class="btn btn-primary" onclick="listFiles()">
                 <i class="fas fa-list"></i> 列出檔案
               </button>
-              <button class="btn btn-success" onclick="refreshFileList()" style="margin-left: 10px;">
-                <i class="fas fa-sync-alt"></i> 重新整理
-              </button>
-            </div>
-
-            <div id="fileList" class="wifi-list">
-              <div style="padding: 20px; text-align: center; color: #666;">
-                點擊上方按鈕列出檔案
-              </div>
-            </div>
-
-            <div class="form-group">
-              <div style="font-size: 0.9rem; color: #666;">
+              <div style="font-size: 0.9rem; color: #666; margin-top: 10px;">
                 <i class="fas fa-info-circle"></i> 總空間: <span id="totalSpace">-</span> |
                 已使用: <span id="usedSpace">-</span> |
                 可用: <span id="freeSpace">-</span>
               </div>
+            </div>
+
+            <div id="fileList" class="wifi-list" style="display: none;">
+              <!-- 檔案列表將在這裡顯示 -->
             </div>
           </div>
         </div>
@@ -641,7 +641,6 @@
     <div class="toast-icon"></div>
     <div class="toast-message"></div>
   </div>
-
 
   <script>
     // 全局變數
@@ -680,6 +679,11 @@
         tab.classList.remove('active');
       });
       document.getElementById(tabName).classList.add('active');
+
+      // 如果是WiFi頁面，自動掃描
+      if (tabName === 'wifi') {
+        setTimeout(scanWifi, 500);
+      }
     }
 
     // 顯示Toast訊息
@@ -746,10 +750,18 @@
           info += `AP IP: ${data.ap_ip}<br>`;
         }
         if (data.current_ip) {
-          info += `訪問地址: http://${data.current_ip}`;
+          info += `訪問地址: http://${data.current_ip}<br>`;
+        }
+
+        // 更新掃描狀態
+        if (data.is_scanning) {
+          document.getElementById('scanStatus').textContent = '正在掃描中...';
         }
 
         systemInfo.innerHTML = info;
+
+        // 更新儲存空間資訊
+        updateStorageInfo(data);
 
       } catch (error) {
         console.error('更新狀態失敗:', error);
@@ -759,13 +771,13 @@
     // 掃描WiFi
     async function scanWifi() {
       try {
+        document.getElementById('scanStatus').textContent = '掃描中...';
         showToast('正在掃描WiFi...', 'success');
 
         const response = await fetch('/api/scan');
         const networks = await response.json();
 
         const container = document.getElementById('wifiList');
-        container.innerHTML = '';
 
         if (networks.length === 0) {
           container.innerHTML = `
@@ -774,33 +786,55 @@
                             未發現WiFi網路
                         </div>
                     `;
+          document.getElementById('scanStatus').textContent = '掃描完成，未發現網路';
           showToast('未發現WiFi網路', 'error');
           return;
         }
 
+        let html = '';
         networks.forEach(network => {
-          const item = document.createElement('div');
-          item.className = 'wifi-item';
-          item.innerHTML = `
-                        <strong>${network.ssid || '隱藏網路'}</strong><br>
-                        <small>訊號: ${network.rssi} dBm | 通道: ${network.channel} | 加密: ${getEncryption(network.encryption)}</small>
+          // 創建訊號強度條
+          let signalBars = '<div class="signal-bars">';
+          for (let i = 0; i < 4; i++) {
+            signalBars += `<div class="signal-bar ${i < network.signal_level ? 'active' : ''}"></div>`;
+          }
+          signalBars += '</div>';
+
+          html += `
+                        <div class="wifi-item" onclick="selectWifi(this, '${network.ssid}')">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${network.ssid || '隱藏網路'}</strong><br>
+                                    <small style="color: #666;">
+                                        訊號: ${network.rssi} dBm | 
+                                        通道: ${network.channel} | 
+                                        加密: ${network.encryption_name}
+                                    </small>
+                                </div>
+                                ${signalBars}
+                            </div>
+                        </div>
                     `;
-
-          item.onclick = () => {
-            document.querySelectorAll('.wifi-item').forEach(el => el.classList.remove('selected'));
-            item.classList.add('selected');
-            selectedWifi = network;
-            document.getElementById('wifiSsid').value = network.ssid || '';
-          };
-
-          container.appendChild(item);
         });
 
+        container.innerHTML = html;
+        document.getElementById('scanStatus').textContent = `掃描完成，發現 ${networks.length} 個網路`;
         showToast(`發現 ${networks.length} 個網路`, 'success');
       } catch (error) {
         console.error('掃描失敗:', error);
+        document.getElementById('scanStatus').textContent = '掃描失敗';
         showToast('掃描失敗', 'error');
       }
+    }
+
+    // 選擇WiFi
+    function selectWifi(element, ssid) {
+      document.querySelectorAll('.wifi-item').forEach(item => {
+        item.classList.remove('selected');
+      });
+      element.classList.add('selected');
+      selectedWifi = ssid;
+      document.getElementById('wifiSsid').value = ssid;
     }
 
     // 連接WiFi
@@ -809,7 +843,7 @@
       const password = document.getElementById('wifiPassword').value;
 
       if (!ssid && selectedWifi) {
-        ssid = selectedWifi.ssid;
+        ssid = selectedWifi;
       }
 
       if (!ssid) {
@@ -984,50 +1018,31 @@
       }
     }
 
-    // 輔助函數
-    function getEncryption(type) {
-      const enc = {
-        0: "開放",
-        1: "WEP",
-        2: "WPA",
-        3: "WPA2",
-        4: "WPA/WPA2",
-        5: "WPA2 Enterprise",
-        6: "WPA3",
-        7: "WPA2/WPA3"
-      };
-      return enc[type] || "未知";
-    }
-
-    // 列出SPIFFS檔案
+    // 列出檔案
     async function listFiles() {
       try {
         const response = await fetch('/api/files/list');
         const files = await response.json();
 
         const container = document.getElementById('fileList');
+        container.style.display = 'block';
+
+        if (files.length === 0) {
+          container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">沒有檔案</div>';
+          return;
+        }
+
         let html = '<table style="width: 100%; border-collapse: collapse;">';
         html += '<tr style="background: #f8f9fa;">';
         html += '<th style="padding: 10px; text-align: left;">檔案名稱</th>';
         html += '<th style="padding: 10px; text-align: right;">大小</th>';
-        html += '<th style="padding: 10px; text-align: center;">類型</th>';
         html += '</tr>';
 
         files.forEach(file => {
           html += '<tr style="border-bottom: 1px solid #eee;">';
           html += `<td style="padding: 10px;">${file.name}</td>`;
           html += `<td style="padding: 10px; text-align: right;">${formatBytes(file.size)}</td>`;
-          html += `<td style="padding: 10px; text-align: center;">${file.is_directory ? '📁' : '📄'}</td>`;
           html += '</tr>';
-
-          // 如果是config.json檔案，顯示內容
-          if (file.name === '/config.json' && file.content) {
-            html += '<tr>';
-            html += `<td colspan="3" style="padding: 10px; background: #f8f9ff; font-family: monospace; font-size: 0.9rem;">`;
-            html += `<pre>${file.content}</pre>`;
-            html += '</td>';
-            html += '</tr>';
-          }
         });
 
         html += '</table>';
@@ -1038,12 +1053,6 @@
         console.error('列出檔案失敗:', error);
         showToast('列出檔案失敗', 'error');
       }
-    }
-
-    // 重新整理檔案列表
-    function refreshFileList() {
-      listFiles();
-      updateNetworkStatus(); // 同時更新狀態以獲取空間資訊
     }
 
     // 更新儲存空間資訊
@@ -1070,22 +1079,6 @@
       const i = Math.floor(Math.log(bytes) / Math.log(k));
 
       return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-    }
-
-    // 在updateNetworkStatus函數中呼叫
-    async function updateNetworkStatus() {
-      try {
-        const response = await fetch('/api/network/status');
-        const data = await response.json();
-
-        // ... 原有的狀態更新代碼 ...
-
-        // 更新儲存空間資訊
-        updateStorageInfo(data);
-
-      } catch (error) {
-        console.error('更新狀態失敗:', error);
-      }
     }
   </script>
 </body>
