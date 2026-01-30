@@ -37,12 +37,6 @@ String eth_ip_current = "";
 // 設定檔案路徑
 const char *CONFIG_FILE = "/config.json";
 
-// WiFi掃描相關
-unsigned long lastScanTime = 0;
-const unsigned long SCAN_INTERVAL = 30000; // 30秒掃描一次
-bool isScanning = false;
-String scanResult = "[]";
-
 // 函數聲明
 void startAPMode();
 void setupWebServer();
@@ -61,7 +55,6 @@ void connectToWiFi();
 void setupEthernet();
 void WiFiEvent(WiFiEvent_t event);
 void listSPIFFSFiles();
-void performWiFiScan();
 String getEncryptionName(int encryptionType);
 
 void setup()
@@ -146,7 +139,7 @@ void loop()
 {
   server.handleClient();
 
-  // 監控網路狀態
+  // 監控網路狀態（移除定期掃描）
   static unsigned long lastCheck = 0;
   if (millis() - lastCheck > 5000)
   {
@@ -170,101 +163,6 @@ void loop()
 
     lastCheck = millis();
   }
-
-  // 定期掃描WiFi
-  if (!isScanning && millis() - lastScanTime > SCAN_INTERVAL)
-  {
-    if (currentMode == MODE_AP || currentMode == MODE_WIFI || currentMode == MODE_BOTH)
-    {
-      performWiFiScan();
-    }
-  }
-}
-
-void performWiFiScan()
-{
-  if (isScanning)
-    return;
-
-  isScanning = true;
-  Serial.println("開始定期掃描WiFi網路...");
-
-  // 保存當前狀態
-  wl_status_t originalStatus = WiFi.status();
-
-  // 設置為STA模式進行掃描
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(100);
-
-  // 開始掃描
-  int n = WiFi.scanNetworks();
-
-  if (n == 0)
-  {
-    Serial.println("沒有發現任何WiFi網路");
-    scanResult = "[]";
-  }
-  else
-  {
-    Serial.printf("發現 %d 個WiFi網路:\n", n);
-
-    DynamicJsonDocument doc(4096);
-    JsonArray networks = doc.to<JsonArray>();
-
-    for (int i = 0; i < n; i++)
-    {
-      JsonObject network = networks.createNestedObject();
-      String ssid = WiFi.SSID(i);
-      int rssi = WiFi.RSSI(i);
-      int channel = WiFi.channel(i);
-      int encryption = WiFi.encryptionType(i);
-
-      network["ssid"] = ssid;
-      network["rssi"] = rssi;
-      network["channel"] = channel;
-      network["encryption"] = encryption;
-      network["encryption_name"] = getEncryptionName(encryption);
-
-      // 計算訊號強度等級 (0-4)
-      int signalLevel = 0;
-      if (rssi > -50)
-        signalLevel = 4;
-      else if (rssi > -60)
-        signalLevel = 3;
-      else if (rssi > -70)
-        signalLevel = 2;
-      else if (rssi > -80)
-        signalLevel = 1;
-      network["signal_level"] = signalLevel;
-
-      Serial.printf("  %d. %s (訊號: %d dBm, 通道: %d, 加密: %s)\n",
-                    i + 1, ssid.c_str(), rssi, channel, getEncryptionName(encryption).c_str());
-    }
-
-    // 序列化結果
-    String jsonString;
-    serializeJson(doc, jsonString);
-    scanResult = jsonString;
-
-    // 釋放掃描結果
-    WiFi.scanDelete();
-  }
-
-  // 恢復原來的網路模式
-  if (currentMode == MODE_AP)
-  {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
-  }
-  else if (originalStatus == WL_CONNECTED)
-  {
-    // 如果原本有WiFi連接，重新連接
-    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-  }
-
-  isScanning = false;
-  lastScanTime = millis();
 }
 
 String getEncryptionName(int encryptionType)
@@ -411,10 +309,22 @@ void setupWebServer()
 {
   // 靜態文件服務
   server.serveStatic("/", SPIFFS, "/index.html");
-  server.serveStatic("/css", SPIFFS, "/css/");
-  server.serveStatic("/js", SPIFFS, "/js/");
-  server.serveStatic("/images", SPIFFS, "/images/");
-  server.serveStatic("/favicon.ico", SPIFFS, "/favicon.ico");
+  // server.serveStatic("/css", SPIFFS, "/css/");
+  // server.serveStatic("/js", SPIFFS, "/js/");
+  // server.serveStatic("/images", SPIFFS, "/images/");
+  // server.serveStatic("/favicon.ico", SPIFFS, "/favicon.ico");
+
+  server.enableCORS(true);
+  server.enableCrossOrigin(true);
+
+  // ============ 新增 OPTIONS 處理 ============
+  server.on("/api/scan", HTTP_OPTIONS, []()
+            {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(200); });
+  // ==========================================
 
   // API端點
   server.on("/api/scan", HTTP_GET, handleScanWifi);
@@ -426,6 +336,13 @@ void setupWebServer()
   server.on("/api/config/save", HTTP_POST, handleSaveConfig);
   server.on("/api/config/load", HTTP_GET, handleLoadConfig);
   server.on("/api/files/list", HTTP_GET, handleFileList);
+
+  server.on("/api/connect", HTTP_OPTIONS, []()
+            {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(200); });
 
   // 處理根路徑 - 自動重定向到index.html
   server.on("/", HTTP_GET, []()
@@ -497,21 +414,85 @@ void setupWebServer()
 
 void handleScanWifi()
 {
-  Serial.println("收到WiFi掃描請求");
+  Serial.println("收到WiFi掃描請求，開始掃描...");
 
-  // 如果正在掃描中，返回上次結果
-  if (isScanning)
+  // 添加CORS標頭，允許跨來源請求
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  // ====================================
+
+  // 保存當前狀態
+  wl_status_t originalStatus = WiFi.status();
+  String originalSSID = WiFi.SSID();
+
+  // 設置為AP模式進行掃描
+  WiFi.mode(WIFI_AP);
+  WiFi.disconnect();
+  delay(100);
+
+  // 開始掃描
+  int n = WiFi.scanNetworks();
+  Serial.printf("掃描到 %d 個WiFi網路\n", n);
+
+  DynamicJsonDocument doc(4096);
+  JsonArray networks = doc.to<JsonArray>();
+
+  if (n == 0)
   {
-    Serial.println("正在掃描中，返回上次結果");
-    server.send(200, "application/json", scanResult);
-    return;
+    Serial.println("沒有發現任何WiFi網路");
+  }
+  else
+  {
+    for (int i = 0; i < n; i++)
+    {
+      JsonObject network = networks.createNestedObject();
+      String ssid = WiFi.SSID(i);
+      int rssi = WiFi.RSSI(i);
+      int channel = WiFi.channel(i);
+      int encryption = WiFi.encryptionType(i);
+
+      network["ssid"] = ssid;
+      network["rssi"] = rssi;
+      network["channel"] = channel;
+      network["encryption"] = encryption;
+      network["encryption_name"] = getEncryptionName(encryption);
+
+      // 計算訊號強度等級 (0-4)
+      int signalLevel = 0;
+      if (rssi > -50)
+        signalLevel = 4;
+      else if (rssi > -60)
+        signalLevel = 3;
+      else if (rssi > -70)
+        signalLevel = 2;
+      else if (rssi > -80)
+        signalLevel = 1;
+      network["signal_level"] = signalLevel;
+
+      Serial.printf("  %d. %s (訊號: %d dBm, 通道: %d, 加密: %s)\n",
+                    i + 1, ssid.c_str(), rssi, channel, getEncryptionName(encryption).c_str());
+    }
+
+    // 釋放掃描結果
+    WiFi.scanDelete();
   }
 
-  // 執行新的掃描
-  performWiFiScan();
+  // 恢復原來的網路模式
+  if (currentMode == MODE_AP)
+  {
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
+  }
+  else if (originalStatus == WL_CONNECTED && originalSSID.length() > 0)
+  {
+    // 如果原本有WiFi連接，重新連接
+    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+  }
 
-  // 返回掃描結果
-  server.send(200, "application/json", scanResult);
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  server.send(200, "application/json", jsonResponse);
 
   Serial.println("掃描結果已發送");
 }
@@ -719,10 +700,6 @@ void handleNetworkStatus()
   // SPIFFS狀態
   doc["spiffs_total"] = SPIFFS.totalBytes();
   doc["spiffs_used"] = SPIFFS.usedBytes();
-
-  // 掃描狀態
-  doc["is_scanning"] = isScanning;
-  doc["last_scan_time"] = lastScanTime;
 
   String jsonResponse;
   serializeJson(doc, jsonResponse);
