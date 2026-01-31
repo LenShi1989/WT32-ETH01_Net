@@ -3,9 +3,15 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
+#include <Update.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 // 全局變數
 WebServer server(80);
+
+// OTA更新狀態
+bool otaStarted = false;
 
 // 網路模式
 enum NetworkMode
@@ -58,6 +64,9 @@ void setupEthernet();
 void WiFiEvent(WiFiEvent_t event);
 void listSPIFFSFiles();
 String getEncryptionName(int encryptionType);
+void handleOtaUpload();
+void startOTA();
+void setupOTA();
 
 void setup()
 {
@@ -140,6 +149,11 @@ void setup()
 void loop()
 {
   server.handleClient();
+  // 如果有 OTA 請求，處理 OTA
+  if (otaStarted)
+  {
+    ArduinoOTA.handle();
+  }
 
   // 監控網路狀態（移除定期掃描）
   static unsigned long lastCheck = 0;
@@ -399,6 +413,33 @@ void setupWebServer()
     } else {
       server.send(404, "text/plain", "404: Not Found");
     } });
+
+  // 添加 OTA 端點
+  server.on("/api/ota/upload", HTTP_POST, []()
+            { server.send(200, "application/json", "{\"success\": true, \"message\": \"OTA上傳完成\"}"); }, handleOtaUpload);
+
+  server.on("/api/ota/start", HTTP_POST, []()
+            {
+    startOTA();
+    server.send(200, "application/json", "{\"success\": true, \"message\": \"OTA模式已啟動\"}"); });
+
+  server.on("/api/ota/status", HTTP_GET, []()
+            {
+    DynamicJsonDocument doc(256);
+    doc["ota_started"] = otaStarted;
+    doc["ota_port"] = 3232;
+    
+    String jsonResponse;
+    serializeJson(doc, jsonResponse);
+    server.send(200, "application/json", jsonResponse); });
+
+  // 添加 OTA 的 OPTIONS 處理
+  server.on("/api/ota/upload", HTTP_OPTIONS, []()
+            {
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.sendHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+    server.send(200); });
 
   server.begin();
 
@@ -954,4 +995,114 @@ void WiFiEvent(WiFiEvent_t event)
     Serial.println("裝置從AP斷開");
     break;
   }
+}
+
+// 新增 OTA 上傳處理函數
+void handleOtaUpload()
+{
+  HTTPUpload &upload = server.upload();
+
+  if (upload.status == UPLOAD_FILE_START)
+  {
+    Serial.printf("開始OTA上傳: %s\n", upload.filename.c_str());
+
+    // 檢查檔案類型
+    if (!upload.filename.endsWith(".bin"))
+    {
+      Serial.println("錯誤：僅支援 .bin 檔案");
+      return;
+    }
+
+    // 開始更新
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN))
+    {
+      Update.printError(Serial);
+    }
+  }
+  else if (upload.status == UPLOAD_FILE_WRITE)
+  {
+    // 寫入資料
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize)
+    {
+      Update.printError(Serial);
+    }
+    Serial.printf("寫入資料: %d bytes\n", upload.currentSize);
+  }
+  else if (upload.status == UPLOAD_FILE_END)
+  {
+    // 完成上傳
+    if (Update.end(true))
+    {
+      Serial.printf("OTA更新成功，檔案大小: %u bytes\n", upload.totalSize);
+    }
+    else
+    {
+      Update.printError(Serial);
+    }
+  }
+  else if (upload.status == UPLOAD_FILE_ABORTED)
+  {
+    Update.abort();
+    Serial.println("OTA上傳中斷");
+  }
+
+  yield();
+}
+
+// 新增啟動 OTA 函數
+void startOTA()
+{
+  if (!otaStarted)
+  {
+    Serial.println("啟動OTA模式...");
+    otaStarted = true;
+
+    // 設置OTA
+    setupOTA();
+
+    Serial.println("OTA模式已啟動");
+    Serial.println("可通過以下方式更新：");
+    Serial.println("1. Arduino IDE: 工具 -> 端口 -> 網路端口 -> wt32-eth01.local:3232");
+    Serial.println("2. 網頁上傳: http://設備IP地址/ota");
+    Serial.println("注意: OTA期間請勿斷電！");
+  }
+}
+
+// 新增 OTA 設置函數
+void setupOTA()
+{
+  // 設置 OTA
+  ArduinoOTA.setPort(3232);
+  ArduinoOTA.setHostname("wt32-eth01");
+
+  // 無密碼
+  ArduinoOTA.setPassword("admin123");
+
+  ArduinoOTA.onStart([]()
+                     {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("開始OTA更新: " + type); });
+
+  ArduinoOTA.onEnd([]()
+                   { Serial.println("\nOTA更新完成"); });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                        { Serial.printf("更新進度: %u%%\r", (progress / (total / 100))); });
+
+  ArduinoOTA.onError([](ota_error_t error)
+                     {
+    Serial.printf("錯誤[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) Serial.println("認證失敗");
+    else if (error == OTA_BEGIN_ERROR) Serial.println("開始失敗");
+    else if (error == OTA_CONNECT_ERROR) Serial.println("連接失敗");
+    else if (error == OTA_RECEIVE_ERROR) Serial.println("接收失敗");
+    else if (error == OTA_END_ERROR) Serial.println("結束失敗"); });
+
+  ArduinoOTA.begin();
+  Serial.println("OTA服務已啟動");
 }
