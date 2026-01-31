@@ -27,6 +27,8 @@ bool eth_dhcp = true;
 String eth_ip = "192.168.1.100";
 String eth_gateway = "192.168.1.1";
 String eth_subnet = "255.255.255.0";
+String eth_dns1 = "8.8.8.8";
+String eth_dns2 = "8.8.4.4";
 
 // 網路狀態
 bool wifi_connected = false;
@@ -225,8 +227,8 @@ void startAPMode()
   WiFi.disconnect(true);
   delay(100);
 
-  // 設置AP模式
-  WiFi.mode(WIFI_AP);
+  // 設置AP+STA模式
+  WiFi.mode(WIFI_AP_STA);
 
   // 啟動AP
   WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
@@ -288,15 +290,31 @@ void setupEthernet()
 
   if (!eth_dhcp && eth_ip.length() > 0)
   {
-    IPAddress ip, gateway, subnet;
+    IPAddress ip, gateway, subnet, dns1, dns2;
 
     if (ip.fromString(eth_ip.c_str()) &&
         gateway.fromString(eth_gateway.c_str()) &&
         subnet.fromString(eth_subnet.c_str()))
     {
+      // 嘗試解析 DNS 地址
+      bool hasDNS1 = dns1.fromString(eth_dns1.c_str());
+      bool hasDNS2 = dns2.fromString(eth_dns2.c_str());
 
-      ETH.config(ip, gateway, subnet);
-      Serial.println("設置靜態IP配置");
+      if (hasDNS1 && hasDNS2)
+      {
+        ETH.config(ip, gateway, subnet, dns1, dns2);
+        Serial.println("設置靜態IP配置（含DNS）");
+      }
+      else if (hasDNS1)
+      {
+        ETH.config(ip, gateway, subnet, dns1);
+        Serial.println("設置靜態IP配置（含主要DNS）");
+      }
+      else
+      {
+        ETH.config(ip, gateway, subnet);
+        Serial.println("設置靜態IP配置");
+      }
     }
   }
   else
@@ -426,8 +444,8 @@ void handleScanWifi()
   wl_status_t originalStatus = WiFi.status();
   String originalSSID = WiFi.SSID();
 
-  // 設置為AP模式進行掃描
-  WiFi.mode(WIFI_AP);
+  // 設置為AP+STA模式進行掃描
+  WiFi.mode(WIFI_AP_STA);
   WiFi.disconnect();
   delay(100);
 
@@ -631,6 +649,14 @@ void handleEthConfig()
       eth_ip = doc["ip"] | "";
       eth_gateway = doc["gateway"] | "";
       eth_subnet = doc["subnet"] | "";
+      eth_dns1 = doc["dns1"] | "8.8.8.8";
+      eth_dns2 = doc["dns2"] | "8.8.4.4";
+    }
+    else
+    {
+      // DHCP 模式下使用預設 DNS
+      eth_dns1 = "8.8.8.8";
+      eth_dns2 = "8.8.4.4";
     }
 
     // 保存配置
@@ -732,6 +758,8 @@ void handleLoadConfig()
     doc["eth_ip"] = eth_ip;
     doc["eth_gateway"] = eth_gateway;
     doc["eth_subnet"] = eth_subnet;
+    doc["eth_dns1"] = eth_dns1;
+    doc["eth_dns2"] = eth_dns2;
 
     String jsonResponse;
     serializeJson(doc, jsonResponse);
@@ -783,6 +811,8 @@ void saveConfigToSPIFFS()
   doc["eth_subnet"] = eth_subnet;
   doc["ap_ssid"] = ap_ssid;
   doc["ap_password"] = ap_password;
+  doc["eth_dns1"] = eth_dns1;
+  doc["eth_dns2"] = eth_dns2;
 
   // 儲存到SPIFFS
   File configFile = SPIFFS.open(CONFIG_FILE, "w");
@@ -864,6 +894,8 @@ bool loadConfigFromSPIFFS()
   eth_subnet = doc["eth_subnet"] | "255.255.255.0";
   ap_ssid = doc["ap_ssid"] | "WT32-ETH01_Config";
   ap_password = doc["ap_password"] | "12345678";
+  eth_dns1 = doc["eth_dns1"] | "8.8.8.8";
+  eth_dns2 = doc["eth_dns2"] | "8.8.4.4";
 
   Serial.println("設定已從SPIFFS載入");
   Serial.println("載入的設定:");
