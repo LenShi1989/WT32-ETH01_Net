@@ -1,3 +1,9 @@
+/**************************************
+1.Arduino版本：Arduino1.8.19
+2.開發版：ESP32 Dev Module version_3.3.5
+3.功能：預設AP模式，自動導入設定頁面
+**************************************/
+
 #include <WiFi.h>
 #include <ETH.h>
 #include <WebServer.h>
