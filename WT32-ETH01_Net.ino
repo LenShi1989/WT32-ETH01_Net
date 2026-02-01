@@ -13,8 +13,27 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 
+// 乙太網路配置
+#define ETH_PHY_ADDR 1   // LAN8720 PHY 地址（0 或 1）
+#define ETH_PHY_MDC 23   // 固定引腳
+#define ETH_PHY_MDIO 18  // 固定引腳
+#define ETH_PHY_POWER 16 // 電源使能引腳（可能是 GPIO16）
+#define ETH_PHY_TYPE ETH_PHY_LAN8720
+#define ETH_CLK_MODE ETH_CLOCK_GPIO0_IN // WT32-ETH01 使用此時鐘模式
+
+// #define ETH_ADDR 1
+// #define ETH_POWER_PIN 16
+// #define ETH_MDC_PIN 23
+// #define ETH_MDIO_PIN 18
+// #define ETH_TYPE ETH_PHY_LAN8720
+// #define ETH_CLK_MODE ETH_CLOCK_GPIO0_IN
+
 // 全局變數
 WebServer server(80);
+
+// 任務句柄
+TaskHandle_t Task1; // WiFi 任務
+TaskHandle_t Task2; // 乙太網路任務
 
 // OTA更新狀態
 bool otaStarted = false;
@@ -42,7 +61,9 @@ String eth_subnet = "255.255.255.0";
 String eth_dns1 = "8.8.8.8";
 String eth_dns2 = "8.8.4.4";
 
-// 網路狀態
+// 網路狀態（使用互斥鎖保護）
+SemaphoreHandle_t wifiMutex;
+SemaphoreHandle_t ethMutex;
 bool wifi_connected = false;
 bool eth_connected = false;
 String wifi_ip = "";
@@ -73,11 +94,33 @@ String getEncryptionName(int encryptionType);
 void handleOtaUpload();
 void startOTA();
 void setupOTA();
+void printEthStatus();
+void resetEthernet();
+
+// ============ 新增任務函數 ============
+void Task1code(void *parameter); // WiFi任務
+void Task2code(void *parameter); // 乙太網路任務
 
 void setup()
 {
   Serial.begin(115200);
-  Serial.println("\n\n=== WT32-ETH01 網路配置系統 ===");
+  delay(2000); // 增加延遲確保串口穩定
+  Serial.println("\n\n=== WT32-ETH01 雙線程網路配置系統 ===");
+  Serial.printf("SDK版本: %s\n", ESP.getSdkVersion());
+  Serial.printf("晶片型號: %s\n", ESP.getChipModel());
+  Serial.printf("晶片版本: %d\n", ESP.getChipRevision());
+  Serial.printf("CPU頻率: %d MHz\n", ESP.getCpuFreqMHz());
+  Serial.printf("閃存大小: %d KB\n", ESP.getFlashChipSize() / 1024);
+  Serial.printf("可用堆內存: %d bytes\n", ESP.getFreeHeap());
+
+  // 初始化互斥鎖
+  wifiMutex = xSemaphoreCreateMutex();
+  ethMutex = xSemaphoreCreateMutex();
+
+  if (wifiMutex == NULL || ethMutex == NULL)
+  {
+    Serial.println("互斥鎖創建失敗，系統可能不穩定");
+  }
 
   // 初始化SPIFFS
   if (!SPIFFS.begin(true))
@@ -118,6 +161,16 @@ void setup()
     saveConfigToSPIFFS();
   }
 
+  // 打印配置
+  Serial.println("\n=== 載入的配置 ===");
+  Serial.printf("網路模式: %d\n", currentMode);
+  Serial.printf("WiFi SSID: %s\n", wifi_ssid.c_str());
+  Serial.printf("乙太網路 DHCP: %s\n", eth_dhcp ? "啟用" : "禁用");
+  if (!eth_dhcp)
+  {
+    Serial.printf("靜態 IP: %s\n", eth_ip.c_str());
+  }
+
   // 設置網路事件處理
   WiFi.onEvent(WiFiEvent);
 
@@ -146,7 +199,33 @@ void setup()
     break;
   }
 
-  // 設置Web服務器
+  // ============ 創建雙線程 ============
+  Serial.println("\n=== 創建網路線程 ===");
+
+  xTaskCreatePinnedToCore(
+      Task1code,  /* 任務函數 */
+      "WiFiTask", /* 任務名稱 */
+      16384,      /* 增加堆棧大小 */
+      NULL,       /* 參數 */
+      1,          /* 優先級 */
+      &Task1,     /* 任務句柄 */
+      0);         /* 運行在核心0 */
+
+  delay(500); // 等待WiFi線程創建
+
+  xTaskCreatePinnedToCore(
+      Task2code,      /* 任務函數 */
+      "EthernetTask", /* 任務名稱 */
+      16384,          /* 增加堆棧大小 */
+      NULL,           /* 參數 */
+      1,              /* 優先級 */
+      &Task2,         /* 任務句柄 */
+      1);             /* 運行在核心1 */
+
+  Serial.println("線程創建完成");
+
+  // 設置Web服務器（在主線程中運行）
+  delay(1000); // 等待線程初始化
   setupWebServer();
 
   Serial.println("系統啟動完成");
@@ -155,35 +234,272 @@ void setup()
 void loop()
 {
   server.handleClient();
+
   // 如果有 OTA 請求，處理 OTA
   if (otaStarted)
   {
     ArduinoOTA.handle();
   }
 
-  // 監控網路狀態（移除定期掃描）
-  static unsigned long lastCheck = 0;
-  if (millis() - lastCheck > 5000)
-  {
-    if (currentMode == MODE_WIFI || currentMode == MODE_BOTH)
-    {
-      wifi_connected = (WiFi.status() == WL_CONNECTED);
-      if (wifi_connected)
-      {
-        wifi_ip = WiFi.localIP().toString();
-      }
-    }
-
+  // 定期打印乙太網路狀態
+  static unsigned long lastEthPrint = 0;
+  if (millis() - lastEthPrint > 30000)
+  { // 每30秒打印一次
     if (currentMode == MODE_ETH || currentMode == MODE_BOTH)
     {
-      eth_connected = (ETH.localIP().toString() != "0.0.0.0");
-      if (eth_connected)
+      printEthStatus();
+    }
+    lastEthPrint = millis();
+  }
+
+  // 監控網路狀態（移除定期掃描）
+  // static unsigned long lastCheck = 0;
+  // if (millis() - lastCheck > 5000)
+  // {
+  //   if (currentMode == MODE_WIFI || currentMode == MODE_BOTH)
+  //   {
+  //     wifi_connected = (WiFi.status() == WL_CONNECTED);
+  //     if (wifi_connected)
+  //     {
+  //       wifi_ip = WiFi.localIP().toString();
+  //     }
+  //   }
+
+  //   if (currentMode == MODE_ETH || currentMode == MODE_BOTH)
+  //   {
+  //     eth_connected = (ETH.localIP().toString() != "0.0.0.0");
+  //     if (eth_connected)
+  //     {
+  //       eth_ip_current = ETH.localIP().toString();
+  //     }
+  //   }
+
+  //   lastCheck = millis();
+  // }
+
+  // 延遲以釋放CPU時間
+  delay(10);
+}
+
+// ============ WiFi任務函數 ============
+void Task1code(void *parameter)
+{
+  Serial.print("WiFi任務運行在核心: ");
+  Serial.println(xPortGetCoreID());
+
+  while (true)
+  {
+    // 根據網路模式處理WiFi
+    if (currentMode == MODE_AP || currentMode == MODE_WIFI || currentMode == MODE_BOTH)
+    {
+
+      if (currentMode == MODE_AP)
       {
-        eth_ip_current = ETH.localIP().toString();
+        // AP模式處理
+        static bool apStarted = false;
+        if (!apStarted)
+        {
+          if (xSemaphoreTake(wifiMutex, portMAX_DELAY))
+          {
+            startAPMode();
+            apStarted = true;
+            xSemaphoreGive(wifiMutex);
+          }
+        }
+      }
+      else if (currentMode == MODE_WIFI || currentMode == MODE_BOTH)
+      {
+        // WiFi連接模式處理
+        static bool wifiConnecting = false;
+
+        if (xSemaphoreTake(wifiMutex, portMAX_DELAY))
+        {
+          bool wasConnected = wifi_connected;
+          wifi_connected = (WiFi.status() == WL_CONNECTED);
+
+          if (!wifi_connected && wifi_ssid.length() > 0 && !wifiConnecting)
+          {
+            Serial.println("[WiFi任務] 嘗試連接WiFi...");
+            wifiConnecting = true;
+
+            // 先釋放鎖再連接，避免阻塞
+            xSemaphoreGive(wifiMutex);
+
+            // 連接WiFi
+            WiFi.mode(WIFI_STA);
+            WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+
+            int attempts = 0;
+            while (WiFi.status() != WL_CONNECTED && attempts < 20)
+            {
+              delay(500);
+              Serial.print(".");
+              attempts++;
+            }
+
+            if (WiFi.status() == WL_CONNECTED)
+            {
+              wifi_ip = WiFi.localIP().toString();
+              Serial.printf("\n[WiFi任務] WiFi連接成功! IP: %s\n", wifi_ip.c_str());
+            }
+            else
+            {
+              Serial.println("\n[WiFi任務] WiFi連接失敗");
+            }
+
+            wifiConnecting = false;
+            continue; // 跳過本次循環的後續部分
+          }
+          else if (wifi_connected && !wasConnected)
+          {
+            wifi_ip = WiFi.localIP().toString();
+            Serial.printf("[WiFi任務] WiFi已連接，IP: %s\n", wifi_ip.c_str());
+          }
+
+          xSemaphoreGive(wifiMutex);
+        }
       }
     }
 
-    lastCheck = millis();
+    // 任務延遲
+    delay(1000);
+  }
+}
+
+// ============ 乙太網路任務函數 ============
+void Task2code(void *parameter)
+{
+  Serial.print("乙太網路任務運行在核心: ");
+  Serial.println(xPortGetCoreID());
+
+  // 延遲啟動，避免與WiFi同時初始化
+  delay(3000);
+
+  while (true)
+  {
+    // 根據網路模式處理乙太網路
+    if (currentMode == MODE_ETH || currentMode == MODE_BOTH)
+    {
+
+      static bool ethInitialized = false;
+
+      if (!ethInitialized)
+      {
+        Serial.println("[乙太網路任務] 初始化乙太網路...");
+
+        // 使用互斥鎖保護初始化
+        if (xSemaphoreTake(ethMutex, portMAX_DELAY))
+        {
+
+          // 先確保WiFi完全關閉
+          WiFi.disconnect(true);
+          delay(100);
+          WiFi.mode(WIFI_OFF);
+          delay(100);
+
+          // 初始化乙太網路 - 使用正確的引腳定義
+          Serial.println("設置乙太網路引腳...");
+
+          // 使用 ETH.begin() 並指定正確參數
+          bool ethStarted = ETH.begin(
+              ETH_PHY_TYPE,  // PHY 類型
+              ETH_PHY_ADDR,  // PHY 地址
+              ETH_PHY_POWER, // 電源引腳
+              ETH_PHY_MDC,   // MDC 引腳
+              ETH_PHY_MDIO,  // MDIO 引
+              ETH_CLK_MODE   // 時鐘模式
+          );
+
+          if (!ethStarted)
+          {
+            Serial.println("[乙太網路任務] ETH.begin() 失敗，重試...");
+            xSemaphoreGive(ethMutex);
+            delay(5000); // 等待5秒後重試
+            continue;
+          }
+
+          Serial.println("[乙太網路任務] ETH.begin() 成功");
+
+          // 設置主機名
+          ETH.setHostname("wt32-eth01");
+
+          // 配置靜態IP（如果需要）
+          if (!eth_dhcp && eth_ip.length() > 0)
+          {
+            Serial.println("[乙太網路任務] 配置靜態IP...");
+
+            IPAddress ip, gateway, subnet, dns1, dns2;
+
+            if (ip.fromString(eth_ip.c_str()) &&
+                gateway.fromString(eth_gateway.c_str()) &&
+                subnet.fromString(eth_subnet.c_str()))
+            {
+
+              bool hasDNS1 = dns1.fromString(eth_dns1.c_str());
+              bool hasDNS2 = dns2.fromString(eth_dns2.c_str());
+
+              if (hasDNS1 && hasDNS2)
+              {
+                ETH.config(ip, gateway, subnet, dns1, dns2);
+                Serial.println("[乙太網路任務] 靜態IP配置完成（含DNS）");
+              }
+              else if (hasDNS1)
+              {
+                ETH.config(ip, gateway, subnet, dns1);
+                Serial.println("[乙太網路任務] 靜態IP配置完成（含主要DNS）");
+              }
+              else
+              {
+                ETH.config(ip, gateway, subnet);
+                Serial.println("[乙太網路任務] 靜態IP配置完成");
+              }
+            }
+          }
+          else
+          {
+            Serial.println("[乙太網路任務] 使用DHCP模式");
+          }
+
+          ethInitialized = true;
+          xSemaphoreGive(ethMutex);
+        }
+      }
+      else
+      {
+        // 已初始化，檢查連接狀態
+        if (xSemaphoreTake(ethMutex, portMAX_DELAY))
+        {
+          bool wasConnected = eth_connected;
+
+          // 檢查鏈路狀態和IP
+          bool linkUp = ETH.linkUp();
+          bool hasIP = (ETH.localIP().toString() != "0.0.0.0");
+          eth_connected = linkUp && hasIP;
+
+          if (eth_connected)
+          {
+            String currentIP = ETH.localIP().toString();
+            if (currentIP != eth_ip_current)
+            {
+              eth_ip_current = currentIP;
+              Serial.printf("[乙太網路任務] IP: %s, Link: %s\n",
+                            eth_ip_current.c_str(),
+                            linkUp ? "Up" : "Down");
+            }
+          }
+          else if (wasConnected)
+          {
+            Serial.println("[乙太網路任務] 乙太網路斷開連接");
+            eth_ip_current = "";
+          }
+
+          xSemaphoreGive(ethMutex);
+        }
+      }
+    }
+
+    // 任務延遲
+    delay(2000);
   }
 }
 
@@ -241,14 +557,14 @@ void listSPIFFSFiles()
 
 void startAPMode()
 {
-  Serial.println("設置AP模式...");
+  Serial.println("[主線程] 設置AP模式...");
 
   // 斷開所有網路連接
   WiFi.disconnect(true);
   delay(100);
 
-  // 設置AP+STA模式
-  WiFi.mode(WIFI_AP_STA);
+  // 設置AP模式
+  WiFi.mode(WIFI_AP);
 
   // 啟動AP
   WiFi.softAP(ap_ssid.c_str(), ap_password.c_str());
@@ -259,94 +575,29 @@ void startAPMode()
   IPAddress subnet(255, 255, 255, 0);
   WiFi.softAPConfig(apIP, gateway, subnet);
 
-  Serial.print("AP已啟動，SSID: ");
+  Serial.print("[主線程] AP已啟動，SSID: ");
   Serial.println(ap_ssid);
-  Serial.print("AP IP地址: ");
+  Serial.print("[主線程] AP IP地址: ");
   Serial.println(WiFi.softAPIP().toString());
-  Serial.print("AP密碼: ");
-  Serial.println(ap_password);
 }
 
 void connectToWiFi()
 {
-  if (wifi_ssid.length() == 0)
-  {
-    Serial.println("未設置WiFi SSID，跳過連接");
-    return;
-  }
-
-  Serial.print("嘗試連接WiFi: ");
-  Serial.println(wifi_ssid);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
-
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30)
-  {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    wifi_connected = true;
-    wifi_ip = WiFi.localIP().toString();
-    Serial.println("\nWiFi連接成功!");
-    Serial.print("IP地址: ");
-    Serial.println(wifi_ip);
-  }
-  else
-  {
-    Serial.println("\nWiFi連接失敗");
-  }
+  // 這個函數現在由WiFi任務處理
+  Serial.println("[主線程] WiFi連接請求已轉發到WiFi任務");
 }
 
 void setupEthernet()
 {
-  Serial.println("初始化乙太網路...");
-  ETH.begin();
-
-  if (!eth_dhcp && eth_ip.length() > 0)
-  {
-    IPAddress ip, gateway, subnet, dns1, dns2;
-
-    if (ip.fromString(eth_ip.c_str()) &&
-        gateway.fromString(eth_gateway.c_str()) &&
-        subnet.fromString(eth_subnet.c_str()))
-    {
-      // 嘗試解析 DNS 地址
-      bool hasDNS1 = dns1.fromString(eth_dns1.c_str());
-      bool hasDNS2 = dns2.fromString(eth_dns2.c_str());
-
-      if (hasDNS1 && hasDNS2)
-      {
-        ETH.config(ip, gateway, subnet, dns1, dns2);
-        Serial.println("設置靜態IP配置（含DNS）");
-      }
-      else if (hasDNS1)
-      {
-        ETH.config(ip, gateway, subnet, dns1);
-        Serial.println("設置靜態IP配置（含主要DNS）");
-      }
-      else
-      {
-        ETH.config(ip, gateway, subnet);
-        Serial.println("設置靜態IP配置");
-      }
-    }
-  }
-  else
-  {
-    Serial.println("使用DHCP模式");
-  }
+  // 這個函數現在由乙太網路任務處理
+  Serial.println("[主線程] 乙太網路初始化請求已轉發到乙太網路任務");
 }
 
 void setupWebServer()
 {
   // 靜態文件服務
   server.serveStatic("/", SPIFFS, "/index.html");
+  handleNetworkStatus();
   // server.serveStatic("/css", SPIFFS, "/css/");
   // server.serveStatic("/js", SPIFFS, "/js/");
   // server.serveStatic("/images", SPIFFS, "/images/");
@@ -446,6 +697,50 @@ void setupWebServer()
     server.sendHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
     server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
     server.send(200); });
+
+  // 添加 eth 的 GET 處理
+  server.on("/api/eth/diagnose", HTTP_GET, []()
+            {
+  DynamicJsonDocument doc(512);
+  
+  doc["phy_address"] = ETH_PHY_ADDR;
+  doc["phy_type"] = "LAN8720";
+  doc["clock_mode"] = "GPIO0_IN";
+  doc["link_status"] = ETH.linkUp();
+  doc["auto_negotiation"] = ETH.autoNegotiation();
+  doc["speed_mbps"] = ETH.linkSpeed();
+  doc["duplex"] = ETH.fullDuplex();
+  doc["ip_address"] = ETH.localIP().toString();
+  doc["subnet_mask"] = ETH.subnetMask().toString();
+  doc["gateway"] = ETH.gatewayIP().toString();
+  doc["dns_server"] = ETH.dnsIP().toString();
+  doc["mac_address"] = ETH.macAddress();
+  
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  server.send(200, "application/json", jsonResponse); });
+
+  server.on("/api/eth/reset", HTTP_POST, []()
+            {
+  resetEthernet();
+  server.send(200, "application/json", "{\"success\": true, \"message\": \"乙太網路已重置\"}"); });
+
+  server.on("/api/system/info", HTTP_GET, []()
+            {
+  DynamicJsonDocument doc(512);
+  
+  doc["sdk_version"] = ESP.getSdkVersion();
+  doc["chip_model"] = ESP.getChipModel();
+  doc["chip_revision"] = ESP.getChipRevision();
+  doc["cpu_freq_mhz"] = ESP.getCpuFreqMHz();
+  doc["flash_size_kb"] = ESP.getFlashChipSize() / 1024;
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["sketch_size"] = ESP.getSketchSize();
+  doc["free_sketch_space"] = ESP.getFreeSketchSpace();
+  
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  server.send(200, "application/json", jsonResponse); });
 
   server.begin();
 
@@ -640,7 +935,32 @@ void handleSetNetworkMode()
 
     if (mode >= MODE_AP && mode <= MODE_BOTH)
     {
+      // 更新網路模式
       currentMode = (NetworkMode)mode;
+
+      // 根據新模式重置網路狀態
+      if (xSemaphoreTake(wifiMutex, pdMS_TO_TICKS(100)))
+      {
+        if (mode == MODE_ETH)
+        {
+          // 切換到乙太網路模式時關閉WiFi
+          WiFi.disconnect(true);
+          wifi_connected = false;
+          wifi_ip = "";
+        }
+        xSemaphoreGive(wifiMutex);
+      }
+
+      if (xSemaphoreTake(ethMutex, pdMS_TO_TICKS(100)))
+      {
+        if (mode == MODE_WIFI)
+        {
+          // 切換到WiFi模式時停止乙太網路
+          eth_connected = false;
+          eth_ip_current = "";
+        }
+        xSemaphoreGive(ethMutex);
+      }
 
       // 保存配置
       saveConfigToSPIFFS();
@@ -730,30 +1050,38 @@ void handleNetworkStatus()
 
   doc["current_mode"] = (int)currentMode;
 
-  // WiFi狀態
-  if (currentMode == MODE_WIFI || currentMode == MODE_BOTH)
+  // WiFi狀態（使用互斥鎖保護）
+  if (xSemaphoreTake(wifiMutex, pdMS_TO_TICKS(100)))
   {
-    wifi_connected = (WiFi.status() == WL_CONNECTED);
-    doc["wifi_connected"] = wifi_connected;
-    if (wifi_connected)
+    if (currentMode == MODE_WIFI || currentMode == MODE_BOTH)
     {
-      doc["wifi_ssid"] = WiFi.SSID();
-      doc["wifi_ip"] = WiFi.localIP().toString();
-      doc["wifi_rssi"] = WiFi.RSSI();
+      wifi_connected = (WiFi.status() == WL_CONNECTED);
+      doc["wifi_connected"] = wifi_connected;
+      if (wifi_connected)
+      {
+        doc["wifi_ssid"] = WiFi.SSID();
+        doc["wifi_ip"] = WiFi.localIP().toString();
+        doc["wifi_rssi"] = WiFi.RSSI();
+      }
     }
+    xSemaphoreGive(wifiMutex);
   }
 
-  // 乙太網路狀態
-  if (currentMode == MODE_ETH || currentMode == MODE_BOTH)
+  // 乙太網路狀態（使用互斥鎖保護）
+  if (xSemaphoreTake(ethMutex, pdMS_TO_TICKS(100)))
   {
-    eth_connected = (ETH.localIP().toString() != "0.0.0.0");
-    doc["eth_connected"] = eth_connected;
-    if (eth_connected)
+    if (currentMode == MODE_ETH || currentMode == MODE_BOTH)
     {
-      doc["eth_ip"] = ETH.localIP().toString();
-      doc["eth_gateway"] = ETH.gatewayIP().toString();
-      doc["eth_subnet"] = ETH.subnetMask().toString();
+      eth_connected = (ETH.localIP().toString() != "0.0.0.0");
+      doc["eth_connected"] = eth_connected;
+      if (eth_connected)
+      {
+        doc["eth_ip"] = ETH.localIP().toString();
+        doc["eth_gateway"] = ETH.gatewayIP().toString();
+        doc["eth_subnet"] = ETH.subnetMask().toString();
+      }
     }
+    xSemaphoreGive(ethMutex);
   }
 
   // 當前IP（用於訪問）
@@ -773,6 +1101,10 @@ void handleNetworkStatus()
   // SPIFFS狀態
   doc["spiffs_total"] = SPIFFS.totalBytes();
   doc["spiffs_used"] = SPIFFS.usedBytes();
+
+  // 線程信息
+  doc["wifi_task_core"] = xPortGetCoreID() == 0 ? "核心0" : "核心1";
+  doc["eth_task_core"] = xPortGetCoreID() == 1 ? "核心1" : "核心0";
 
   String jsonResponse;
   serializeJson(doc, jsonResponse);
@@ -954,52 +1286,36 @@ bool loadConfigFromSPIFFS()
 
 void WiFiEvent(WiFiEvent_t event)
 {
-  switch (event)
+  // 使用互斥鎖保護共享資源
+  if (xSemaphoreTake(wifiMutex, pdMS_TO_TICKS(50)))
   {
-  case ARDUINO_EVENT_ETH_START:
-    Serial.println("乙太網路開始");
-    ETH.setHostname("wt32-eth01");
-    break;
+    switch (event)
+    {
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      Serial.println("[事件] WiFi已連接");
+      break;
 
-  case ARDUINO_EVENT_ETH_CONNECTED:
-    Serial.println("乙太網路已連接");
-    break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifi_ip = WiFi.localIP().toString();
+      Serial.print("[事件] WiFi獲取IP: ");
+      Serial.println(wifi_ip);
+      wifi_connected = true;
+      break;
 
-  case ARDUINO_EVENT_ETH_GOT_IP:
-    eth_ip_current = ETH.localIP().toString();
-    Serial.print("乙太網路獲取IP: ");
-    Serial.println(eth_ip_current);
-    eth_connected = true;
-    break;
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      Serial.println("[事件] WiFi斷開連接");
+      wifi_connected = false;
+      break;
 
-  case ARDUINO_EVENT_ETH_DISCONNECTED:
-    Serial.println("乙太網路斷開連接");
-    eth_connected = false;
-    break;
+    case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
+      Serial.println("[事件] 有裝置連接到AP");
+      break;
 
-  case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-    Serial.println("WiFi已連接");
-    break;
-
-  case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-    wifi_ip = WiFi.localIP().toString();
-    Serial.print("WiFi獲取IP: ");
-    Serial.println(wifi_ip);
-    wifi_connected = true;
-    break;
-
-  case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-    Serial.println("WiFi斷開連接");
-    wifi_connected = false;
-    break;
-
-  case ARDUINO_EVENT_WIFI_AP_STACONNECTED:
-    Serial.println("有裝置連接到AP");
-    break;
-
-  case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
-    Serial.println("裝置從AP斷開");
-    break;
+    case ARDUINO_EVENT_WIFI_AP_STADISCONNECTED:
+      Serial.println("[事件] 裝置從AP斷開");
+      break;
+    }
+    xSemaphoreGive(wifiMutex);
   }
 }
 
@@ -1111,4 +1427,45 @@ void setupOTA()
 
   ArduinoOTA.begin();
   Serial.println("OTA服務已啟動");
+}
+
+// 實現診斷函數
+void printEthStatus()
+{
+  Serial.println("\n=== 乙太網路狀態診斷 ===");
+  Serial.printf("PHY 地址: %d\n", ETH_PHY_ADDR);
+  Serial.printf("時鐘模式: %s\n", (ETH_CLK_MODE == ETH_CLOCK_GPIO0_IN) ? "GPIO0_IN" : "Unknown");
+  Serial.printf("鏈路狀態: %s\n", ETH.linkUp() ? "Up" : "Down");
+  Serial.printf("自動協商: %s\n", ETH.autoNegotiation() ? "Enabled" : "Disabled");
+  Serial.printf("速度: %d Mbps\n", ETH.linkSpeed());
+  Serial.printf("雙工模式: %s\n", ETH.fullDuplex() ? "Full" : "Half");
+  Serial.printf("IP地址: %s\n", ETH.localIP().toString().c_str());
+  Serial.printf("子網掩碼: %s\n", ETH.subnetMask().toString().c_str());
+  Serial.printf("閘道器: %s\n", ETH.gatewayIP().toString().c_str());
+  Serial.printf("DNS服務器: %s\n", ETH.dnsIP().toString().c_str());
+  Serial.println("========================\n");
+}
+
+void resetEthernet()
+{
+  Serial.println("重置乙太網路...");
+
+  if (xSemaphoreTake(ethMutex, portMAX_DELAY))
+  {
+    // 停止乙太網路
+    ETH.config(IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0));
+    delay(100);
+
+    // 重新初始化
+    ETH.begin(
+        ETH_PHY_TYPE,
+        ETH_PHY_ADDR,
+        ETH_PHY_MDC,
+        ETH_PHY_MDIO,
+        ETH_PHY_POWER,
+        ETH_CLK_MODE);
+
+    Serial.println("乙太網路已重置");
+    xSemaphoreGive(ethMutex);
+  }
 }
